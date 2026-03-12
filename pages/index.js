@@ -1,4 +1,5 @@
 import { useState } from "react"
+import DxfParser from "dxf-parser"
 
 export default function Home() {
 
@@ -10,19 +11,63 @@ export default function Home() {
 
     const text = await file.text()
 
-    const response = await fetch("/api/analyze",{
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json"
-      },
-      body:JSON.stringify({
-        file:text
+    const parser = new DxfParser()
+
+    try{
+
+      const dxf = parser.parseSync(text)
+
+      const lines = []
+      const texts = []
+
+      for(const entity of dxf.entities){
+
+        if(entity.type === "LINE"){
+
+          lines.push({
+            start:entity.start,
+            end:entity.end,
+            layer:entity.layer
+          })
+
+        }
+
+        if(entity.type === "LWPOLYLINE"){
+
+          lines.push({
+            vertices:entity.vertices,
+            layer:entity.layer
+          })
+
+        }
+
+        if(entity.type === "TEXT" || entity.type === "MTEXT"){
+
+          texts.push({
+            text:entity.text || entity.string,
+            layer:entity.layer
+          })
+
+        }
+
+      }
+
+      setResult({
+        totalEntities:dxf.entities.length,
+        lineCount:lines.length,
+        textCount:texts.length,
+        lines,
+        texts
       })
-    })
 
-    const data = await response.json()
+    }catch(err){
 
-    setResult(data)
+      console.error(err)
+
+      alert("Error parsing DXF")
+
+    }
+
   }
 
   return (
