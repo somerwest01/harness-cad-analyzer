@@ -34,7 +34,6 @@ export default function Home() {
       const hItem = allTexts.find(t => t.content === "ITEM #");
       const hConn = allTexts.find(t => t.content === "CONNECTOR");
       const hOem = allTexts.find(t => t.content === "CONNECTOR OEM ITEM");
-      // Agregamos posibles nombres para Lock y Cavities
       const hLock = allTexts.find(t => t.content === "LOCK");
       const hCav = allTexts.find(t => t.content === "CAVITIES");
 
@@ -79,7 +78,7 @@ export default function Home() {
   }
 
   return (
-    <div style={{ padding: "40px", fontFamily: "Segoe UI, Tahoma, sans-serif", backgroundColor: "#f8f9fa", minHeight: "100vh" }}>
+    <div style={{ padding: "40px", fontFamily: "Segoe UI, sans-serif", backgroundColor: "#f8f9fa", minHeight: "100vh" }}>
       <h1 style={{ color: "#0d6efd" }}>Harness CAD Analyzer</h1>
       
       <div style={{ background: "white", padding: "20px", borderRadius: "10px", boxShadow: "0 2px 10px rgba(0,0,0,0.05)", marginBottom: "30px" }}>
@@ -97,7 +96,7 @@ export default function Home() {
               <tr style={{ backgroundColor: "#e9ecef", textAlign: "left" }}>
                 <th style={{ padding: "12px", borderBottom: "2px solid #dee2e6" }}>ITEM #</th>
                 <th style={{ padding: "12px", borderBottom: "2px solid #dee2e6" }}>CONNECTOR</th>
-                <th style={{ padding: "12px", borderBottom: "2px solid #dee2e6" }}>CONNECTOR OEM ITEM</th>
+                <th style={{ padding: "12px", borderBottom: "2px solid #dee2e6" }}>OEM ITEM</th>
                 <th style={{ padding: "12px", borderBottom: "2px solid #dee2e6" }}>LOCK</th>
                 <th style={{ padding: "12px", borderBottom: "2px solid #dee2e6" }}>CAVITIES</th>
               </tr>
@@ -117,7 +116,7 @@ export default function Home() {
         </div>
       ) : resultInfo && (
         <div style={{ color: "#dc3545", padding: "20px", background: "#f8d7da", borderRadius: "8px" }}>
-          ⚠️ Se procesó el archivo pero no se pudo estructurar la tabla. Revisa que los encabezados sean correctos.
+          ⚠️ Archivo leído, pero no se encontró la tabla con el encabezado "ITEM #".
         </div>
       )}
     </div>
