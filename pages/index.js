@@ -29,8 +29,8 @@ export default function Home() {
         }));
 
       // Búsqueda de encabezados sin comillas y en mayúsculas (según tu captura)
-      const hItem = allTexts.find(t => t.content === "ITEM #");
-      const hConn = allTexts.find(t => t.content === "CONNECTOR");
+      const hItem = allTexts.find(t => t.content === "Item #");
+      const hConn = allTexts.find(t => t.content === "Conenector");
       const hOem = allTexts.find(t => t.content === "CONNECTOR OEM ITEM");
       const hLock = allTexts.find(t => t.content === "LOCK") || allTexts.find(t => t.content === "CANDADO");
       const hCav = allTexts.find(t => t.content === "CAVITIES") || allTexts.find(t => t.content === "CAVIDADES");
