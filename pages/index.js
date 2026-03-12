@@ -2,13 +2,12 @@ import { useState } from "react";
 import DxfParser from "dxf-parser";
 
 export default function Home() {
-  const [result, setResult] = useState(null);
   const [asociadoTable, setAsociadoTable] = useState([]);
-  const [debugTexts, setDebugTexts] = useState([]);
+  const [debugInfo, setDebugInfo] = useState("");
 
   const cleanText = (str) => {
     if (!str) return "";
-    // Limpia formatos de MTEXT y espacios extra
+    // Limpieza profunda de caracteres de control de AutoCAD y espacios
     return str.replace(/\\P/g, " ").replace(/\{[^}]+\}/g, "").replace(/\\[a-zA-Z0-9]/g, "").trim();
   };
 
@@ -21,8 +20,6 @@ export default function Home() {
 
     try {
       const dxf = parser.parseSync(text);
-      
-      // Extraemos y limpiamos todos los textos
       const allTexts = dxf.entities
         .filter((e) => e.type === "TEXT" || e.type === "MTEXT")
         .map(t => ({
@@ -31,83 +28,79 @@ export default function Home() {
           y: t.start?.y || 0,
         }));
 
-      console.log("Textos detectados en el DXF:", allTexts);
-      setDebugTexts(allTexts.slice(0, 10)); // Guardamos los primeros 10 para ver en pantalla
+      // Búsqueda de encabezados sin comillas y en mayúsculas (según tu captura)
+      const hItem = allTexts.find(t => t.content === "ITEM #");
+      const hConn = allTexts.find(t => t.content === "CONNECTOR");
+      const hOem = allTexts.find(t => t.content === "CONNECTOR OEM ITEM");
+      const hLock = allTexts.find(t => t.content === "LOCK") || allTexts.find(t => t.content === "CANDADO");
+      const hCav = allTexts.find(t => t.content === "CAVITIES") || allTexts.find(t => t.content === "CAVIDADES");
 
-      // 1. Buscamos encabezados con búsqueda flexible (case-insensitive)
-      const findHeader = (term) => 
-        allTexts.find(t => t.content.toLowerCase().includes(term.toLowerCase()));
-
-      const hItem = findHeader("Item #") || findHeader("Item");
-      const hConn = findHeader("Connector") || findHeader("Conn");
-      const hOem = findHeader("OEM");
-
-      let tableRows = [];
-
-      if (hItem) {
-        const rowTolerance = 5; // Aumentamos un poco la tolerancia de alineación
-        const colTolerance = 50; // Tolerancia de ancho de columna
-
-        // Filtrar lo que está debajo del encabezado
-        const bodyTexts = allTexts.filter(t => t.y < hItem.y - 1);
-
-        const rowsMap = {};
-        bodyTexts.forEach(t => {
-          const rowKey = Math.round(t.y / rowTolerance) * rowTolerance;
-          if (!rowsMap[rowKey]) rowsMap[rowKey] = {};
-
-          if (Math.abs(t.x - hItem.x) < colTolerance) rowsMap[rowKey].item = t.content;
-          if (hConn && Math.abs(t.x - hConn.x) < colTolerance) rowsMap[rowKey].connector = t.content;
-          if (hOem && Math.abs(t.x - hOem.x) < colTolerance) rowsMap[rowKey].oemItem = t.content;
-        });
-
-        tableRows = Object.values(rowsMap)
-          .filter(row => row.item && !isNaN(parseInt(row.item))) // Solo filas donde el Item sea un número
-          .sort((a, b) => parseInt(a.item) - parseInt(b.item));
+      if (!hItem) {
+        setDebugInfo("No se encontró el encabezado ITEM # exactamente. Revisa la consola.");
+        return;
       }
 
-      setAsociadoTable(tableRows);
-      setResult({ totalEntities: dxf.entities.length });
+      const rowsMap = {};
+      const rowTolerance = 10; // Margen vertical para agrupar celdas en una fila
+      const colTolerance = 50; // Margen horizontal para alinear con el encabezado
+
+      // Filtrar textos por debajo del encabezado
+      const bodyTexts = allTexts.filter(t => t.y < hItem.y - 2);
+
+      bodyTexts.forEach(t => {
+        const rowKey = Math.round(t.y / rowTolerance) * rowTolerance;
+        if (!rowsMap[rowKey]) rowsMap[rowKey] = {};
+
+        // Alineación por columna X
+        if (Math.abs(t.x - hItem.x) < colTolerance) rowsMap[rowKey].item = t.content;
+        if (hConn && Math.abs(t.x - hConn.x) < colTolerance) rowsMap[rowKey].connector = t.content;
+        if (hOem && Math.abs(t.x - hOem.x) < colTolerance) rowsMap[rowKey].oemItem = t.content;
+        if (hLock && Math.abs(t.x - hLock.x) < colTolerance) rowsMap[rowKey].lock = t.content;
+        if (hCav && Math.abs(t.x - hCav.x) < colTolerance) rowsMap[rowKey].cavities = t.content;
+      });
+
+      const finalRows = Object.values(rowsMap)
+        .filter(r => r.item && !isNaN(parseInt(r.item)))
+        .sort((a, b) => parseInt(a.item) - parseInt(b.item));
+
+      setAsociadoTable(finalRows);
+      setDebugInfo(finalRows.length > 0 ? "" : "Encabezados encontrados, pero no se detectaron datos numéricos debajo.");
 
     } catch (err) {
-      console.error("Error al procesar:", err);
-      alert("Error al procesar el DXF. Revisa la consola (F12)");
+      console.error(err);
+      alert("Error al procesar el archivo.");
     }
   }
 
   return (
-    <div style={{ padding: "40px", fontFamily: "sans-serif", backgroundColor: "#f4f4f9", minHeight: "100vh" }}>
-      <h1>Harness CAD Analyzer 🔍</h1>
+    <div style={{ padding: "30px", fontFamily: "Arial, sans-serif", backgroundColor: "#f4f7f6", minHeight: "100vh" }}>
+      <h1 style={{ color: "#2c3e50" }}>Análisis de Tabla: Asociado</h1>
       
-      <div style={{ marginBottom: "20px", padding: "20px", background: "white", borderRadius: "8px" }}>
+      <div style={{ background: "white", padding: "20px", borderRadius: "8px", boxShadow: "0 2px 10px rgba(0,0,0,0.1)", marginBottom: "20px" }}>
         <input type="file" onChange={handleFile} accept=".dxf" />
+        {debugInfo && <p style={{ color: "#e74c3c", marginTop: "10px" }}>{debugInfo}</p>}
       </div>
 
-      {asociadoTable.length === 0 && result && (
-        <div style={{ color: "red", marginBottom: "20px" }}>
-          ⚠️ No se detectó la tabla. Verifica que el archivo tenga un texto llamado "Item #" o "Connector".
-          <p>Primeros textos encontrados:</p>
-          <ul>{debugTexts.map((t, i) => <li key={i}>"{t.content}" en X:{t.x.toFixed(1)}</li>)}</ul>
-        </div>
-      )}
-
       {asociadoTable.length > 0 && (
-        <div style={{ background: "white", padding: "20px", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
-          <h2>Tabla "Asociado"</h2>
-          <table border="1" cellPadding="10" style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead style={{ backgroundColor: "#eee" }}>
-              <tr>
-                <th>Item #</th>
-                <th>Connector</th>
-                <th>OEM Item</th>
+        <div style={{ background: "white", borderRadius: "8px", overflow: "hidden", boxShadow: "0 2px 10px rgba(0,0,0,0.1)" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ backgroundColor: "#2980b9", color: "white", textAlign: "left" }}>
+                <th style={{ padding: "12px" }}>ITEM #</th>
+                <th style={{ padding: "12px" }}>CONNECTOR</th>
+                <th style={{ padding: "12px" }}>CONNECTOR OEM ITEM</th>
+                <th style={{ padding: "12px" }}>LOCK</th>
+                <th style={{ padding: "12px" }}>CAVITIES</th>
               </tr>
             </thead>
             <tbody>
               {asociadoTable.map((row, i) => (
-                <tr key={i}>
-                  <td>{row.item}</td>
-                  <td>{row.connector || "-"}</td>
-                  <td>{row.oemItem || "-"}</td>
+                <tr key={i} style={{ borderBottom: "1px solid #eee", backgroundColor: i % 2 === 0 ? "#fff" : "#fcfcfc" }}>
+                  <td style={{ padding: "12px", fontWeight: "bold" }}>{row.item}</td>
+                  <td style={{ padding: "12px" }}>{row.connector || "-"}</td>
+                  <td style={{ padding: "12px" }}>{row.oemItem || "-"}</td>
+                  <td style={{ padding: "12px" }}>{row.lock || "-"}</td>
+                  <td style={{ padding: "12px" }}>{row.cavities || "-"}</td>
                 </tr>
               ))}
             </tbody>
