@@ -41,8 +41,8 @@ export default function Home() {
 
       if (hItem) {
         const rowsMap = {};
-        const rowTolerance = 10; // Margen para textos en la misma fila
-        const colTolerance = 60; // Margen para alineación vertical
+        const rowTolerance = 10; // Margen para agrupar textos en la misma fila
+        const colTolerance = 60; // Margen para alineación vertical de columna
 
         // Filtramos textos que están físicamente debajo del encabezado ITEM #
         const bodyTexts = allTexts.filter(t => t.y < hItem.y - 2);
@@ -59,7 +59,7 @@ export default function Home() {
           if (hCav && Math.abs(t.x - hCav.x) < colTolerance) rowsMap[rowKey].cavities = t.content;
         });
 
-        // Convertir el mapa a array y filtrar solo los que tienen número de item
+        // Filtrar solo filas con número de item y ordenar
         finalRows = Object.values(rowsMap)
           .filter(r => r.item && !isNaN(parseInt(r.item)))
           .sort((a, b) => parseInt(a.item) - parseInt(b.item));
@@ -78,45 +78,41 @@ export default function Home() {
   }
 
   return (
-    <div style={{ padding: "40px", fontFamily: "Segoe UI, sans-serif", backgroundColor: "#f8f9fa", minHeight: "100vh" }}>
-      <h1 style={{ color: "#0d6efd" }}>Harness CAD Analyzer</h1>
+    <div style={{ padding: "40px", fontFamily: "Segoe UI, sans-serif", backgroundColor: "#f0f2f5", minHeight: "100vh" }}>
+      <h1 style={{ color: "#1a73e8", textAlign: "center" }}>Harness CAD Analyzer</h1>
       
-      <div style={{ background: "white", padding: "20px", borderRadius: "10px", boxShadow: "0 2px 10px rgba(0,0,0,0.05)", marginBottom: "30px" }}>
-        <p style={{ fontWeight: "bold" }}>Cargar archivo DXF:</p>
-        <input type="file" onChange={handleFile} accept=".dxf" />
+      <div style={{ background: "white", padding: "30px", borderRadius: "12px", boxShadow: "0 4px 6px rgba(0,0,0,0.1)", marginBottom: "30px", maxWidth: "800px", margin: "0 auto 30px" }}>
+        <label style={{ display: "block", marginBottom: "10px", fontWeight: "bold" }}>Seleccionar dibujo DXF:</label>
+        <input type="file" onChange={handleFile} accept=".dxf" style={{ width: "100%", padding: "10px", border: "1px solid #ddd", borderRadius: "4px" }} />
       </div>
 
-      {asociadoTable.length > 0 ? (
-        <div style={{ background: "white", borderRadius: "10px", overflow: "hidden", boxShadow: "0 4px 15px rgba(0,0,0,0.1)" }}>
-          <div style={{ padding: "15px", backgroundColor: "#0d6efd", color: "white" }}>
-            <h2 style={{ margin: 0 }}>Tabla Detectada: ASOCIADO</h2>
+      {asociadoTable.length > 0 && (
+        <div style={{ background: "white", borderRadius: "12px", overflow: "hidden", boxShadow: "0 10px 15px rgba(0,0,0,0.1)", maxWidth: "1000px", margin: "0 auto" }}>
+          <div style={{ padding: "20px", backgroundColor: "#1a73e8", color: "white" }}>
+            <h2 style={{ margin: 0 }}>Listado de Componentes (Asociado)</h2>
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
-              <tr style={{ backgroundColor: "#e9ecef", textAlign: "left" }}>
-                <th style={{ padding: "12px", borderBottom: "2px solid #dee2e6" }}>ITEM #</th>
-                <th style={{ padding: "12px", borderBottom: "2px solid #dee2e6" }}>CONNECTOR</th>
-                <th style={{ padding: "12px", borderBottom: "2px solid #dee2e6" }}>OEM ITEM</th>
-                <th style={{ padding: "12px", borderBottom: "2px solid #dee2e6" }}>LOCK</th>
-                <th style={{ padding: "12px", borderBottom: "2px solid #dee2e6" }}>CAVITIES</th>
+              <tr style={{ backgroundColor: "#f8f9fa", textAlign: "left" }}>
+                <th style={{ padding: "15px", borderBottom: "2px solid #dee2e6" }}>ITEM #</th>
+                <th style={{ padding: "15px", borderBottom: "2px solid #dee2e6" }}>CONNECTOR</th>
+                <th style={{ padding: "15px", borderBottom: "2px solid #dee2e6" }}>OEM ITEM</th>
+                <th style={{ padding: "15px", borderBottom: "2px solid #dee2e6" }}>LOCK</th>
+                <th style={{ padding: "15px", borderBottom: "2px solid #dee2e6" }}>CAVITIES</th>
               </tr>
             </thead>
             <tbody>
               {asociadoTable.map((row, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid #dee2e6" }}>
-                  <td style={{ padding: "12px", fontWeight: "bold" }}>{row.item}</td>
-                  <td style={{ padding: "12px" }}>{row.connector || "-"}</td>
-                  <td style={{ padding: "12px" }}>{row.oemItem || "-"}</td>
-                  <td style={{ padding: "12px" }}>{row.lock || "-"}</td>
-                  <td style={{ padding: "12px" }}>{row.cavities || "-"}</td>
+                <tr key={i} style={{ borderBottom: "1px solid #eee", transition: "background 0.2s" }}>
+                  <td style={{ padding: "15px", fontWeight: "bold", color: "#1a73e8" }}>{row.item}</td>
+                  <td style={{ padding: "15px" }}>{row.connector || "-"}</td>
+                  <td style={{ padding: "15px" }}>{row.oemItem || "-"}</td>
+                  <td style={{ padding: "15px" }}>{row.lock || "-"}</td>
+                  <td style={{ padding: "15px" }}>{row.cavities || "-"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      ) : resultInfo && (
-        <div style={{ color: "#dc3545", padding: "20px", background: "#f8d7da", borderRadius: "8px" }}>
-          ⚠️ Archivo leído, pero no se encontró la tabla con el encabezado "ITEM #".
         </div>
       )}
     </div>
