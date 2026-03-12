@@ -20,6 +20,20 @@ export default function Home() {
       const lines = []
       const texts = []
 
+const connectors = texts.filter(t => {
+
+  if(!t.text) return false
+
+  const value = t.text.toUpperCase()
+
+  return (
+    value.startsWith("C") ||
+    value.startsWith("J") ||
+    value.startsWith("P")
+  )
+
+})      
+
       for(const entity of dxf.entities){
 
         if(entity.type === "LINE"){
@@ -52,13 +66,15 @@ export default function Home() {
 
       }
 
-      setResult({
-        totalEntities:dxf.entities.length,
-        lineCount:lines.length,
-        textCount:texts.length,
-        lines,
-        texts
-      })
+setResult({
+  totalEntities:dxf.entities.length,
+  lineCount:lines.length,
+  textCount:texts.length,
+  connectorCount:connectors.length,
+  connectors,
+  lines,
+  texts
+})
 
     }catch(err){
 
