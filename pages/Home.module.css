@@ -28,31 +28,61 @@
 
 .tableContainer {
   background: white;
-  padding: 20px;
   border-radius: 12px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  margin-top: 20px;
+  overflow: hidden; /* Para que el borde redondeado corte la tabla */
+}
+
+/* Encabezado clickable para ocultar */
+.collapsibleHeader {
+  background-color: #3498db;
+  color: white;
+  padding: 15px 20px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+}
+
+.collapsibleHeader:hover {
+  background-color: #2980b9;
+}
+
+/* Contenedor con Scroll */
+.scrollArea {
+  max-height: 500px; /* Altura máxima antes de mostrar scroll */
+  overflow-y: auto;
   overflow-x: auto;
 }
 
 .table {
   width: 100%;
   border-collapse: collapse;
-  margin-top: 10px;
 }
 
 .table th {
-  background-color: #3498db;
-  color: white;
-  padding: 12px;
+  background-color: #f8f9fa;
+  color: #333;
+  padding: 8px 12px; /* Más delgado */
   text-align: left;
-  text-transform: uppercase;
-  font-size: 13px;
+  font-size: 12px;
+  border-bottom: 2px solid #dee2e6;
+  position: sticky; /* El encabezado se queda arriba al bajar */
+  top: 0;
+  z-index: 10;
 }
 
 .table td {
-  padding: 12px;
-  font-size: 14px;
+  padding: 4px 12px; /* Reducción de grosor de fila */
+  font-size: 13px;
   border-bottom: 1px solid #eee;
+  white-space: nowrap; /* Evita que el texto salte de línea */
+}
+
+.table tr:hover {
+  background-color: #f1f1f1;
 }
 
 .statusOk {
