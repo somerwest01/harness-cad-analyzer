@@ -8,7 +8,6 @@ function DxfCanvas({ dxfRaw }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    // Validaciones iniciales para evitar errores de "undefined"
     if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
     
     const canvas = canvasRef.current;
@@ -18,83 +17,95 @@ function DxfCanvas({ dxfRaw }) {
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
-    const growBounds = (v) => {
+    // 1. Cálculo de límites (Bounding Box) corregido para desplazamientos
+    const growBounds = (v, offX = 0, offY = 0) => {
       if (v && typeof v.x === 'number' && typeof v.y === 'number') {
-        minX = Math.min(minX, v.x); minY = Math.min(minY, v.y);
-        maxX = Math.max(maxX, v.x); maxY = Math.max(maxY, v.y);
+        const realX = v.x + offX;
+        const realY = v.y + offY;
+        minX = Math.min(minX, realX); minY = Math.min(minY, realY);
+        maxX = Math.max(maxX, realX); maxY = Math.max(maxY, realY);
       }
     };
 
-    const processEntityForBounds = (ent) => {
+    const processEntityForBounds = (ent, offX = 0, offY = 0) => {
       if (!ent) return;
-      if (ent.vertices) ent.vertices.forEach(growBounds);
-      if (ent.start) { growBounds(ent.start); growBounds(ent.end); }
-      if (ent.center && typeof ent.radius === 'number') {
-        growBounds({ x: ent.center.x - ent.radius, y: ent.center.y - ent.radius });
-        growBounds({ x: ent.center.x + ent.radius, y: ent.center.y + ent.radius });
+      if (ent.vertices) ent.vertices.forEach(v => growBounds(v, offX, offY));
+      if (ent.start) { growBounds(ent.start, offX, offY); growBounds(ent.end, offX, offY); }
+      if (ent.center) {
+        growBounds({ x: ent.center.x - ent.radius, y: ent.center.y - ent.radius }, offX, offY);
+        growBounds({ x: ent.center.x + ent.radius, y: ent.center.y + ent.radius }, offX, offY);
       }
       if (ent.type === 'INSERT' && blocks[ent.name] && blocks[ent.name].entities) {
-        blocks[ent.name].entities.forEach(processEntityForBounds);
+        // Los bloques se desplazan según su posición de inserción
+        const insX = ent.position ? ent.position.x : 0;
+        const insY = ent.position ? ent.position.y : 0;
+        blocks[ent.name].entities.forEach(sub => processEntityForBounds(sub, offX + insX, offY + insY));
       }
     };
 
-    entities.forEach(processEntityForBounds);
+    entities.forEach(ent => processEntityForBounds(ent));
     if (minX === Infinity) return;
 
     const width = maxX - minX;
     const height = maxY - minY;
-    const padding = 80;
+    const padding = 100; // Más margen para ver bien los textos
     const scale = Math.min((canvas.width - padding) / (width || 1), (canvas.height - padding) / (height || 1));
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const tX = (x) => (x - minX) * scale + padding / 2;
     const tY = (y) => canvas.height - ((y - minY) * scale + padding / 2);
 
-    const drawEntity = (ent, offsetX = 0, offsetY = 0) => {
+    // 2. Función de dibujado con recursividad de posición real
+    const drawEntity = (ent, offX = 0, offY = 0) => {
       if (!ent) return;
       ctx.beginPath();
       ctx.strokeStyle = "#2c3e50";
       ctx.lineWidth = 1;
       
       try {
-        if (ent.type === 'LINE' && ent.start && ent.end) {
-          ctx.moveTo(tX(ent.start.x + offsetX), tY(ent.start.y + offsetY));
-          ctx.lineTo(tX(ent.end.x + offsetX), tY(ent.end.y + offsetY));
+        const x1 = ent.start ? ent.start.x + offX : 0;
+        const y1 = ent.start ? ent.start.y + offY : 0;
+        const x2 = ent.end ? ent.end.x + offX : 0;
+        const y2 = ent.end ? ent.end.y + offY : 0;
+
+        if (ent.type === 'LINE') {
+          ctx.moveTo(tX(x1), tY(y1));
+          ctx.lineTo(tX(x2), tY(y2));
           ctx.stroke();
         } 
         else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
           ent.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(tX(v.x + offsetX), tY(v.y + offsetY));
-            else ctx.lineTo(tX(v.x + offsetX), tY(v.y + offsetY));
+            if (i === 0) ctx.moveTo(tX(v.x + offX), tY(v.y + offY));
+            else ctx.lineTo(tX(v.x + offX), tY(v.y + offY));
           });
           ctx.stroke();
         } 
         else if (ent.type === 'CIRCLE' && ent.center) {
-          ctx.arc(tX(ent.center.x + offsetX), tY(ent.center.y + offsetY), (ent.radius || 1) * scale, 0, 2 * Math.PI);
+          ctx.arc(tX(ent.center.x + offX), tY(ent.center.y + offY), (ent.radius || 1) * scale, 0, 2 * Math.PI);
           ctx.stroke();
         }
-        else if ((ent.type === 'MTEXT' || ent.type === 'TEXT')) {
+        else if (ent.type === 'MTEXT' || ent.type === 'TEXT') {
           ctx.fillStyle = "#e67e22";
-          const fSize = Math.max(10, (ent.height || 10) * scale);
+          const fSize = Math.max(8, (ent.height || 10) * scale);
           ctx.font = `bold ${fSize}px Arial`;
-          const pX = ent.position ? ent.position.x : (ent.start ? ent.start.x : 0);
-          const pY = ent.position ? ent.position.y : (ent.start ? ent.start.y : 0);
-          ctx.fillText(ent.text || ent.string || "", tX(pX + offsetX), tY(pY + offsetY));
+          const pX = (ent.position ? ent.position.x : (ent.start ? ent.start.x : 0)) + offX;
+          const pY = (ent.position ? ent.position.y : (ent.start ? ent.start.y : 0)) + offY;
+          // Limpiar el texto de códigos de formato de AutoCAD (ej: {\fArial|b0...})
+          const cleanText = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").replace(/\^I/g, " ");
+          ctx.fillText(cleanText, tX(pX), tY(pY));
         }
         else if (ent.type === 'INSERT' && blocks[ent.name] && blocks[ent.name].entities) {
           const insX = ent.position ? ent.position.x : 0;
           const insY = ent.position ? ent.position.y : 0;
-          blocks[ent.name].entities.forEach(sub => drawEntity(sub, insX + offsetX, insY + offsetY));
+          blocks[ent.name].entities.forEach(sub => drawEntity(sub, offX + insX, offY + insY));
         }
-      } catch (e) {
-        console.warn("Entidad saltada por error de formato", ent);
-      }
+      } catch (e) { }
     };
 
     entities.forEach(ent => drawEntity(ent));
   }, [dxfRaw]);
 
-  return <canvas ref={canvasRef} width={1200} height={700} style={{ width: '100%', height: 'auto', background: '#fff', borderRadius: '8px', border: '1px solid #ddd' }} />;
+  return <canvas ref={canvasRef} width={1500} height={800} style={{ width: '100%', height: 'auto', background: '#fff', borderRadius: '8px', border: '1px solid #ddd' }} />;
 }
 
 // --- APP PRINCIPAL ---
