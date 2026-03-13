@@ -51,6 +51,7 @@ function DxfCanvas({ dxfRaw }) {
 
     // 2. Función de dibujado recursiva
     const drawEntity = (ent, offsetX = 0, offsetY = 0) => {
+      if (!ent) return;
       ctx.beginPath();
       ctx.strokeStyle = "#2c3e50";
       
@@ -71,7 +72,7 @@ function DxfCanvas({ dxfRaw }) {
         ctx.stroke();
       }
       else if (ent.type === 'MTEXT' || ent.type === 'TEXT') {
-        ctx.fillStyle = "#34495e";
+        ctx.fillStyle = "#e67e22";
         ctx.font = `${Math.max(8, (ent.height || 10) * scale)}px sans-serif`;
         ctx.fillText(ent.text || ent.string || "", tX(ent.position.x + offsetX), tY(ent.position.y + offsetY));
       }
@@ -180,7 +181,7 @@ export default function Home() {
 
       setDxfData({
         total: dxf.entities.length,
-        entities: dxf,
+        raw: dxf,
         textEntities: dxfTexts.length,
         layers: Object.keys(dxf.tables.layer.layers)
       });
@@ -258,7 +259,7 @@ export default function Home() {
       )}
 
       {/* PANEL 3: VISTA PREVIA GRÁFICA */}
-      {dxfData && dxfData.entities && (
+      {dxfData && dxfData.raw && (
         <div className={styles.tableContainer} style={{ marginTop: '20px', marginBottom: '40px' }}>
           <div className={styles.collapsibleHeader} style={{ backgroundColor: '#9b59b6' }} onClick={() => setIsCanvasVisible(!isCanvasVisible)}>
             <span>🖼️ Vista Previa del Arnés</span>
