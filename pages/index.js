@@ -11,7 +11,7 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  // 1. Auto-Zoom inicial corregido
+  // 1. Auto-Zoom inicial: Encuentra el arnés y lo centra
   useEffect(() => {
     if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
     
@@ -23,12 +23,11 @@ function DxfCanvas({ dxfRaw }) {
       if (ent.vertices) pts.push(...ent.vertices);
       if (ent.start) pts.push(ent.start, ent.end);
       if (ent.position) pts.push(ent.position);
-      if (ent.center) {
-        const r = ent.radius || 0;
-        pts.push({ x: ent.center.x - r, y: ent.center.y - r }, { x: ent.center.x + r, y: ent.center.y + r });
-      }
+      
       pts.forEach(p => {
         if (!isNaN(p.x) && !isNaN(p.y)) {
+          // Ignorar puntos basura muy lejos del origen si el archivo es grande
+          if (Math.abs(p.x) < 0.001 && Math.abs(p.y) < 0.001 && dxfRaw.entities.length > 100) return;
           minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
           maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
         }
@@ -39,89 +38,89 @@ function DxfCanvas({ dxfRaw }) {
 
     const width = maxX - minX;
     const height = maxY - minY;
-    const padding = 100;
+    const padding = 150;
     const initialScale = Math.min((canvas.width - padding) / (width || 1), (canvas.height - padding) / (height || 1));
     
     setScale(initialScale);
-    // Centrar el dibujo en el canvas
     setOffset({
       x: (canvas.width / 2) - (minX + width / 2) * initialScale,
       y: (canvas.height / 2) + (minY + height / 2) * initialScale
     });
   }, [dxfRaw]);
 
-  // 2. Renderizado de alto rendimiento
+  // 2. Renderizado: Dibuja LINE, TEXT y CIRCLE
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Sistema de coordenadas unificado: Invertimos el eje Y de AutoCAD para el Canvas
-    const toCanvasX = (x) => x * scale + offset.x;
-    const toCanvasY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
+    // Transformación: x e y originales de AutoCAD a píxeles de pantalla
+    const drawX = (x) => x * scale + offset.x;
+    const drawY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
     dxfRaw.entities.forEach(ent => {
       ctx.beginPath();
-      ctx.strokeStyle = "#1a252f"; 
       ctx.lineWidth = 1;
-
-      if (ent.type === 'LINE' && ent.start && ent.end) {
-        ctx.moveTo(toCanvasX(ent.start.x), toCanvasY(ent.start.y));
-        ctx.lineTo(toCanvasX(ent.end.x), toCanvasY(ent.end.y));
+      
+      // Dibujar LINE (Los cables del arnés)
+      if (ent.type === 'LINE') {
+        ctx.strokeStyle = "#2c3e50";
+        ctx.moveTo(drawX(ent.start.x), drawY(ent.start.y));
+        ctx.lineTo(drawX(ent.end.x), drawY(ent.end.y));
         ctx.stroke();
       } 
+      // Dibujar Polilíneas
       else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
+        ctx.strokeStyle = "#2c3e50";
         ent.vertices.forEach((v, i) => {
-          if (i === 0) ctx.moveTo(toCanvasX(v.x), toCanvasY(v.y));
-          else ctx.lineTo(toCanvasX(v.x), toCanvasY(v.y));
+          if (i === 0) ctx.moveTo(drawX(v.x), drawY(v.y));
+          else ctx.lineTo(drawX(v.x), drawY(v.y));
         });
         ctx.stroke();
-      } 
-      else if (ent.type === 'CIRCLE' && ent.center) {
-        ctx.arc(toCanvasX(ent.center.x), toCanvasY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
+      }
+      // Dibujar Círculos (Conectores)
+      else if (ent.type === 'CIRCLE') {
+        ctx.strokeStyle = "#2980b9";
+        ctx.arc(drawX(ent.center.x), drawY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
         ctx.stroke();
-      } 
+      }
+      // Dibujar TEXT (Nombres de conectores post-explode)
       else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-        ctx.fillStyle = "#d35400"; // Naranja para etiquetas
-        // El tamaño del texto ahora escala perfectamente con el zoom
-        const fontSize = Math.max(1, (ent.height || 10) * scale);
-        ctx.font = `bold ${fontSize}px sans-serif`;
+        ctx.fillStyle = "#e67e22";
+        // El tamaño de fuente ahora se ajusta dinámicamente para no encimarse
+        const fontSize = Math.max(2, (ent.height || 10) * scale); 
+        ctx.font = `${fontSize}px Arial`;
         
-        // AutoCAD usa 'position' para MTEXT y 'start' para TEXT
         const p = ent.position || ent.start || { x: 0, y: 0 };
-        const cleanTxt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ");
+        const textStr = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ");
         
-        ctx.fillText(cleanTxt, toCanvasX(p.x), toCanvasY(p.y));
+        ctx.fillText(textStr, drawX(p.x), drawY(p.y));
       }
     });
   }, [dxfRaw, scale, offset]);
 
-  // 3. Handlers de Cámara (Mouse)
+  // 3. Handlers de Mouse (Zoom en el puntero y Pan)
   const handleWheel = (e) => {
     e.preventDefault();
-    const delta = -e.deltaY;
-    const factor = Math.pow(1.1, delta / 200);
-    const newScale = scale * factor;
-
+    const factor = Math.pow(1.1, -e.deltaY / 200);
     const rect = canvasRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // Zoom hacia el puntero del mouse
     setOffset(prev => ({
       x: mouseX - (mouseX - prev.x) * factor,
       y: mouseY - (mouseY - prev.y) * factor
     }));
-    setScale(newScale);
+    setScale(s => s * factor);
   };
 
-  const handleMouseDown = (e) => {
+  const onMouseDown = (e) => {
     setIsDragging(true);
     setLastMousePos({ x: e.clientX, y: e.clientY });
   };
 
-  const handleMouseMove = (e) => {
+  const onMouseMove = (e) => {
     if (!isDragging) return;
     const dx = e.clientX - lastMousePos.x;
     const dy = e.clientY - lastMousePos.y;
@@ -130,20 +129,19 @@ function DxfCanvas({ dxfRaw }) {
   };
 
   return (
-    <div style={{ position: 'relative', overflow: 'hidden', border: '1px solid #ccc', borderRadius: '8px' }}>
-      <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(255,255,255,0.9)', padding: '8px', borderRadius: '4px', fontSize: '12px', zIndex: 10, border: '1px solid #ddd' }}>
-        🔍 <b>Rueda:</b> Zoom | 🖱️ <b>Arrastrar:</b> Pan
+    <div style={{ position: 'relative', border: '2px solid #34495e', borderRadius: '10px', overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', top: 10, left: 10, background: 'white', padding: '5px', borderRadius: '5px', fontSize: '12px', zIndex: 10, boxShadow: '0 2px 5px rgba(0,0,0,0.2)' }}>
+        📍 Use el <b>scroll</b> para Zoom y <b>arrastre</b> para mover
       </div>
       <canvas 
         ref={canvasRef} 
-        width={1800} 
-        height={900} 
+        width={1800} height={900} 
         onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
         onMouseUp={() => setIsDragging(false)}
         onMouseLeave={() => setIsDragging(false)}
-        style={{ width: '100%', height: 'auto', background: '#fff', cursor: isDragging ? 'grabbing' : 'grab' }} 
+        style={{ width: '100%', cursor: isDragging ? 'grabbing' : 'grab', background: '#ffffff' }} 
       />
     </div>
   );
