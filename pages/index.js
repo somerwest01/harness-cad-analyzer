@@ -1,5 +1,6 @@
 import { useState } from "react";
 import DxfParser from "dxf-parser";
+import * as XLSX from "xlsx";
 
 export default function Home() {
   const [asociadoTable, setAsociadoTable] = useState([]);
