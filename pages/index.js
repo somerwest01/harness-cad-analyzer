@@ -11,10 +11,9 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  // 1. Auto-Zoom inicial: Encuentra el arnés y lo centra
+  // 1. Auto-Zoom inicial (Calcula el área real ocupada)
   useEffect(() => {
     if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
-    
     const canvas = canvasRef.current;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
@@ -23,10 +22,9 @@ function DxfCanvas({ dxfRaw }) {
       if (ent.vertices) pts.push(...ent.vertices);
       if (ent.start) pts.push(ent.start, ent.end);
       if (ent.position) pts.push(ent.position);
-      
       pts.forEach(p => {
         if (!isNaN(p.x) && !isNaN(p.y)) {
-          // Ignorar puntos basura muy lejos del origen si el archivo es grande
+          // Filtro antipuntos basura (0,0)
           if (Math.abs(p.x) < 0.001 && Math.abs(p.y) < 0.001 && dxfRaw.entities.length > 100) return;
           minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
           maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
@@ -34,12 +32,9 @@ function DxfCanvas({ dxfRaw }) {
       });
     });
 
-    if (minX === Infinity) return;
-
     const width = maxX - minX;
     const height = maxY - minY;
-    const padding = 150;
-    const initialScale = Math.min((canvas.width - padding) / (width || 1), (canvas.height - padding) / (height || 1));
+    const initialScale = Math.min((canvas.width - 100) / (width || 1), (canvas.height - 100) / (height || 1));
     
     setScale(initialScale);
     setOffset({
@@ -48,100 +43,83 @@ function DxfCanvas({ dxfRaw }) {
     });
   }, [dxfRaw]);
 
-  // 2. Renderizado: Dibuja LINE, TEXT y CIRCLE
+  // 2. Renderizado con corrección de escala de texto
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Transformación: x e y originales de AutoCAD a píxeles de pantalla
-    const drawX = (x) => x * scale + offset.x;
-    const drawY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
+    const dX = (x) => x * scale + offset.x;
+    const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
     dxfRaw.entities.forEach(ent => {
       ctx.beginPath();
-      ctx.lineWidth = 1;
-      
-      // Dibujar LINE (Los cables del arnés)
+      ctx.lineWidth = 1; // Forzamos línea delgada siempre visible
+      ctx.strokeStyle = "#000000"; // Negro puro para las líneas/cables
+
+      // Dibujar LINE y LWPOLYLINE (Cables y rutas)
       if (ent.type === 'LINE') {
-        ctx.strokeStyle = "#2c3e50";
-        ctx.moveTo(drawX(ent.start.x), drawY(ent.start.y));
-        ctx.lineTo(drawX(ent.end.x), drawY(ent.end.y));
+        ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
+        ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
         ctx.stroke();
       } 
-      // Dibujar Polilíneas
       else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
-        ctx.strokeStyle = "#2c3e50";
         ent.vertices.forEach((v, i) => {
-          if (i === 0) ctx.moveTo(drawX(v.x), drawY(v.y));
-          else ctx.lineTo(drawX(v.x), drawY(v.y));
+          if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
+          else ctx.lineTo(dX(v.x), dY(v.y));
         });
         ctx.stroke();
       }
-      // Dibujar Círculos (Conectores)
+      // Dibujar CIRCLE (Puntos de conexión)
       else if (ent.type === 'CIRCLE') {
-        ctx.strokeStyle = "#2980b9";
-        ctx.arc(drawX(ent.center.x), drawY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
+        ctx.strokeStyle = "#0055ff";
+        ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
         ctx.stroke();
       }
-      // Dibujar TEXT (Nombres de conectores post-explode)
+      // Dibujar TEXT (Nombres de conectores)
       else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-        ctx.fillStyle = "#e67e22";
-        // El tamaño de fuente ahora se ajusta dinámicamente para no encimarse
-        const fontSize = Math.max(2, (ent.height || 10) * scale); 
-        ctx.font = `${fontSize}px Arial`;
+        // --- AQUÍ ESTÁ EL TRUCO PARA EL TEXTO ---
+        // Ajustamos el tamaño para que sea legible pero no una mancha
+        const baseHeight = ent.height || 2.5; 
+        const fontSize = baseHeight * scale;
         
-        const p = ent.position || ent.start || { x: 0, y: 0 };
-        const textStr = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ");
-        
-        ctx.fillText(textStr, drawX(p.x), drawY(p.y));
+        if (fontSize > 1) { // Solo dibujar si no es un punto invisible
+          ctx.fillStyle = "#ff6600"; 
+          ctx.font = `${fontSize}px Arial`;
+          const p = ent.position || ent.start || { x: 0, y: 0 };
+          const text = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ");
+          ctx.fillText(text, dX(p.x), dY(p.y));
+        }
       }
     });
   }, [dxfRaw, scale, offset]);
 
-  // 3. Handlers de Mouse (Zoom en el puntero y Pan)
+  // Manejadores de eventos (Zoom en el puntero)
   const handleWheel = (e) => {
     e.preventDefault();
-    const factor = Math.pow(1.1, -e.deltaY / 200);
+    const factor = Math.pow(1.1, -e.deltaY / 250);
     const rect = canvasRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    setOffset(prev => ({
-      x: mouseX - (mouseX - prev.x) * factor,
-      y: mouseY - (mouseY - prev.y) * factor
-    }));
+    const mX = e.clientX - rect.left;
+    const mY = e.clientY - rect.top;
+    setOffset(prev => ({ x: mX - (mX - prev.x) * factor, y: mY - (mY - prev.y) * factor }));
     setScale(s => s * factor);
   };
 
-  const onMouseDown = (e) => {
-    setIsDragging(true);
-    setLastMousePos({ x: e.clientX, y: e.clientY });
-  };
-
+  const onMouseDown = (e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); };
   const onMouseMove = (e) => {
     if (!isDragging) return;
-    const dx = e.clientX - lastMousePos.x;
-    const dy = e.clientY - lastMousePos.y;
-    setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+    setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
     setLastMousePos({ x: e.clientX, y: e.clientY });
   };
 
   return (
-    <div style={{ position: 'relative', border: '2px solid #34495e', borderRadius: '10px', overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', top: 10, left: 10, background: 'white', padding: '5px', borderRadius: '5px', fontSize: '12px', zIndex: 10, boxShadow: '0 2px 5px rgba(0,0,0,0.2)' }}>
-        📍 Use el <b>scroll</b> para Zoom y <b>arrastre</b> para mover
-      </div>
+    <div style={{ border: '1px solid #000', borderRadius: '4px', overflow: 'hidden', background: '#fff' }}>
       <canvas 
-        ref={canvasRef} 
-        width={1800} height={900} 
-        onWheel={handleWheel}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={() => setIsDragging(false)}
-        onMouseLeave={() => setIsDragging(false)}
-        style={{ width: '100%', cursor: isDragging ? 'grabbing' : 'grab', background: '#ffffff' }} 
+        ref={canvasRef} width={1800} height={800} 
+        onWheel={handleWheel} onMouseDown={onMouseDown} onMouseMove={onMouseMove}
+        onMouseUp={() => setIsDragging(false)} onMouseLeave={() => setIsDragging(false)}
+        style={{ width: '100%', cursor: isDragging ? 'grabbing' : 'grab' }} 
       />
     </div>
   );
