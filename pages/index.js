@@ -8,13 +8,12 @@ function DxfCanvas({ entities }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    // Si no hay entidades, no hacemos nada
     if (!entities || entities.length === 0 || !canvasRef.current) return;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     
-    // 1. Calcular límites extremos (Bounding Box)
+    // 1. Cálculo de límites (Bounding Box) más preciso
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
     entities.forEach(e => {
@@ -22,6 +21,11 @@ function DxfCanvas({ entities }) {
       if (e.vertices) points.push(...e.vertices);
       if (e.start) points.push(e.start);
       if (e.end) points.push(e.end);
+      if (e.center) {
+        // Para círculos/arcos, calculamos los bordes
+        points.push({ x: e.center.x - e.radius, y: e.center.y - e.radius });
+        points.push({ x: e.center.x + e.radius, y: e.center.y + e.radius });
+      }
 
       points.forEach(v => {
         if (v.x !== undefined && v.y !== undefined) {
@@ -31,61 +35,56 @@ function DxfCanvas({ entities }) {
       });
     });
 
-    // Validar que encontramos puntos válidos
     if (minX === Infinity) return;
 
     const width = maxX - minX;
     const height = maxY - minY;
-    const padding = 50; // Margen para que no toque los bordes
-    
-    // Calculamos la escala para que el dibujo quepa perfectamente
-    const scale = Math.min(
-      (canvas.width - padding) / (width || 1), 
-      (canvas.height - padding) / (height || 1)
-    );
+    const padding = 60;
+    const scale = Math.min((canvas.width - padding) / (width || 1), (canvas.height - padding) / (height || 1));
 
-    // 2. Limpiar y configurar estilo
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = "#2c3e50"; // Color oscuro para visibilidad
-    ctx.lineWidth = 1.5;
-    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#2c3e50";
+    ctx.lineWidth = 1.2;
 
-    // 3. Función auxiliar para transformar coordenadas de DXF a Canvas
-    const transformX = (x) => (x - minX) * scale + padding / 2;
-    const transformY = (y) => canvas.height - ((y - minY) * scale + padding / 2);
+    const tX = (x) => (x - minX) * scale + padding / 2;
+    const tY = (y) => canvas.height - ((y - minY) * scale + padding / 2);
 
-    // 4. Dibujar entidades
+    // 2. Dibujado de entidades con mayor soporte
     entities.forEach(e => {
       ctx.beginPath();
+      
+      // Soporte para Líneas y Polilíneas
       if (e.type === 'LINE' && e.start && e.end) {
-        ctx.moveTo(transformX(e.start.x), transformY(e.start.y));
-        ctx.lineTo(transformX(e.end.x), transformY(e.end.y));
-        ctx.stroke();
-      } else if ((e.type === 'LWPOLYLINE' || e.type === 'POLYLINE') && e.vertices) {
+        ctx.moveTo(tX(e.start.x), tY(e.start.y));
+        ctx.lineTo(tX(e.end.x), tY(e.end.y));
+      } 
+      else if ((e.type === 'LWPOLYLINE' || e.type === 'POLYLINE') && e.vertices) {
         e.vertices.forEach((v, i) => {
-          if (i === 0) ctx.moveTo(transformX(v.x), transformY(v.y));
-          else ctx.lineTo(transformX(v.x), transformY(v.y));
+          if (i === 0) ctx.moveTo(tX(v.x), tY(v.y));
+          else ctx.lineTo(tX(v.x), tY(v.y));
         });
-        ctx.stroke();
-      } else if (e.type === 'CIRCLE' && e.center) {
-        ctx.arc(transformX(e.center.x), transformY(e.center.y), e.radius * scale, 0, 2 * Math.PI);
-        ctx.stroke();
+      } 
+      // Soporte para Círculos
+      else if (e.type === 'CIRCLE' && e.center) {
+        ctx.arc(tX(e.center.x), tY(e.center.y), e.radius * scale, 0, 2 * Math.PI);
       }
+      // Soporte para Arcos (común en curvas de cables)
+      else if (e.type === 'ARC' && e.center) {
+        const startAngle = -e.startAngle * Math.PI / 180;
+        const endAngle = -e.endAngle * Math.PI / 180;
+        ctx.arc(tX(e.center.x), tY(e.center.y), e.radius * scale, startAngle, endAngle, true);
+      }
+      
+      ctx.stroke();
     });
-  }, [entities]); // Se ejecuta cada vez que 'entities' cambie
+  }, [entities]);
 
   return (
     <canvas 
       ref={canvasRef} 
-      width={1200} // Aumentamos resolución
-      height={600} 
-      style={{ 
-        width: '100%', 
-        height: 'auto',
-        background: '#ffffff', 
-        borderRadius: '8px', 
-        border: '1px solid #ddd' 
-      }} 
+      width={1200} 
+      height={700} 
+      style={{ width: '100%', height: 'auto', background: '#ffffff', borderRadius: '8px', border: '1px solid #ddd' }} 
     />
   );
 }
