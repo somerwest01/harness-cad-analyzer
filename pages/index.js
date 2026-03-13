@@ -13,10 +13,16 @@ function DxfCanvas({ dxfRaw }) {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     
+    // 1. Filtrar entidades válidas para el cálculo de límites
+    const validEntities = dxfRaw.entities.filter(ent => {
+      // Ignoramos puntos que estén exactamente en 0,0 si hay muchas más entidades
+      if (ent.type === 'POINT' && Math.abs(ent.position?.x) < 0.1) return false;
+      return true;
+    });
+
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
-    // 1. Cálculo de límites (Bounding Box) de alta precisión
-    dxfRaw.entities.forEach(ent => {
+    validEntities.forEach(ent => {
       const points = [];
       if (ent.vertices) points.push(...ent.vertices);
       if (ent.start) { points.push(ent.start); points.push(ent.end); }
@@ -28,62 +34,81 @@ function DxfCanvas({ dxfRaw }) {
       }
 
       points.forEach(p => {
-        // Ignorar basura en el origen 0,0 si el dibujo es grande
-        if (Math.abs(p.x) < 0.001 && Math.abs(p.y) < 0.001 && dxfRaw.entities.length > 50) return;
         if (!isNaN(p.x) && !isNaN(p.y)) {
+          // Si el punto está ridículamente lejos (basura de CAD), lo ignoramos
+          if (Math.abs(p.x) > 1000000 || Math.abs(p.y) > 1000000) return;
           minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
           maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
         }
       });
     });
 
-    if (minX === Infinity) return;
+    // Si no se detectó nada útil, abortamos
+    if (minX === Infinity || maxX === -Infinity) return;
 
     const width = maxX - minX;
     const height = maxY - minY;
-    const padding = 120; // Espacio extra para que no se corte el texto
-    const scale = Math.min((canvas.width - padding) / (width || 1), (canvas.height - padding) / (height || 1));
+    
+    // Aumentamos el padding para que no toque los bordes
+    const padding = 150; 
+    const scale = Math.min(
+      (canvas.width - padding) / (width || 1), 
+      (canvas.height - padding) / (height || 1)
+    );
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Funciones de transformación
     const tX = (x) => (x - minX) * scale + padding / 2;
     const tY = (y) => canvas.height - ((y - minY) * scale + padding / 2);
 
-    // 2. Dibujado de entidades explotadas
-    dxfRaw.entities.forEach(ent => {
+    // 2. Dibujar con estilo mejorado
+    validEntities.forEach(ent => {
       ctx.beginPath();
-      ctx.strokeStyle = "#2c3e50";
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = "#1a252f"; // Color más oscuro y nítido
+      ctx.lineWidth = 1.2;
 
-      try {
-        if (ent.type === 'LINE' && ent.start && ent.end) {
-          ctx.moveTo(tX(ent.start.x), tY(ent.start.y));
-          ctx.lineTo(tX(ent.end.x), tY(ent.end.y));
-          ctx.stroke();
-        } 
-        else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
-          ent.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(tX(v.x), tY(v.y));
-            else ctx.lineTo(tX(v.x), tY(v.y));
-          });
-          ctx.stroke();
-        } 
-        else if (ent.type === 'CIRCLE' && ent.center) {
-          ctx.arc(tX(ent.center.x), tY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
-          ctx.stroke();
-        }
-        else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-          ctx.fillStyle = "#e67e22";
-          const fSize = Math.max(10, (ent.height || 12) * scale);
-          ctx.font = `bold ${fSize}px Arial`;
-          const p = ent.position || ent.start || { x: 0, y: 0 };
-          const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ");
-          ctx.fillText(txt, tX(p.x), tY(p.y));
-        }
-      } catch (err) {}
+      if (ent.type === 'LINE' && ent.start && ent.end) {
+        ctx.moveTo(tX(ent.start.x), tY(ent.start.y));
+        ctx.lineTo(tX(ent.end.x), tY(ent.end.y));
+        ctx.stroke();
+      } 
+      else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
+        ent.vertices.forEach((v, i) => {
+          if (i === 0) ctx.moveTo(tX(v.x), tY(v.y));
+          else ctx.lineTo(tX(v.x), tY(v.y));
+        });
+        ctx.stroke();
+      } 
+      else if (ent.type === 'CIRCLE' && ent.center) {
+        ctx.arc(tX(ent.center.x), tY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+      else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+        ctx.fillStyle = "#d35400"; // Naranja fuerte para conectores
+        const fSize = Math.max(12, (ent.height || 12) * scale);
+        ctx.font = `bold ${fSize}px sans-serif`;
+        const p = ent.position || ent.start || { x: 0, y: 0 };
+        const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ");
+        ctx.fillText(txt, tX(p.x), tY(p.y));
+      }
     });
   }, [dxfRaw]);
 
-  return <canvas ref={canvasRef} width={1600} height={900} style={{ width: '100%', height: 'auto', background: '#fff', borderRadius: '8px' }} />;
+  return (
+    <canvas 
+      ref={canvasRef} 
+      width={2000} // Mayor resolución interna
+      height={1000} 
+      style={{ 
+        width: '100%', 
+        height: 'auto', 
+        background: '#ffffff', 
+        borderRadius: '12px',
+        boxShadow: 'inset 0 0 10px rgba(0,0,0,0.1)' 
+      }} 
+    />
+  );
 }
 
 export default function Home() {
