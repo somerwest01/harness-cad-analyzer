@@ -1,106 +1,114 @@
 import { useState } from "react";
 import DxfParser from "dxf-parser";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx"; // Importamos el lector de Excel
 
 export default function Home() {
-  const [asociadoTable, setAsociadoTable] = useState([]);
-  const [error, setError] = useState(null);
+  const [dxfInfo, setDxfInfo] = useState(null);
+  const [asociadoData, setAsociadoData] = useState([]);
+  const [fileName, setFileName] = useState({ dxf: "", excel: "" });
 
-  const cleanText = (str) => {
-    if (!str) return "";
-    return str.replace(/\\P/g, " ").replace(/\{[^}]+\}/g, "").replace(/\\[a-zA-Z0-9]/g, "").trim();
-  };
-
-  async function handleFile(e) {
+  // --- LÓGICA PARA EL EXCEL ---
+  const handleExcel = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    setFileName(prev => ({ ...prev, excel: file.name }));
 
-    setError(null);
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const bstr = evt.target.result;
+      const wb = XLSX.read(bstr, { type: "binary" });
+      const wsname = wb.SheetNames[0]; // Tomamos la primera hoja
+      const ws = wb.Sheets[wsname];
+      const data = XLSX.utils.sheet_to_json(ws); // Convertimos a JSON
+      setAsociadoData(data);
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  // --- LÓGICA PARA EL DXF (Simplificada para conteo) ---
+  const handleDxf = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setFileName(prev => ({ ...prev, dxf: file.name }));
+
     const text = await file.text();
     const parser = new DxfParser();
-
     try {
       const dxf = parser.parseSync(text);
-      
-      const allTexts = dxf.entities
-        .filter((e) => e.type === "TEXT" || e.type === "MTEXT")
-        .map(t => ({
-          content: cleanText(t.text || t.string),
-          x: t.start?.x || 0,
-          y: t.start?.y || 0,
-        }));
-
-      // Buscamos los encabezados exactos que vimos en tus capturas
-      const hItem = allTexts.find(t => t.content === "ITEM #");
-      const hConn = allTexts.find(t => t.content === "CONNECTOR");
-      const hOem = allTexts.find(t => t.content === "CONNECTOR OEM ITEM");
-
-      if (!hItem) {
-        setError("No se encontró el encabezado 'ITEM #'. Revisa que el archivo sea el correcto.");
-        return;
-      }
-
-      const rowsMap = {};
-      const rowTolerance = 12; // Un poco más de margen para las filas
-      const colTolerance = 60; 
-
-      // Filtrar textos debajo del encabezado
-      const bodyTexts = allTexts.filter(t => t.y < hItem.y - 2);
-
-      bodyTexts.forEach(t => {
-        const rowKey = Math.round(t.y / rowTolerance) * rowTolerance;
-        if (!rowsMap[rowKey]) rowsMap[rowKey] = {};
-
-        if (Math.abs(t.x - hItem.x) < colTolerance) rowsMap[rowKey].item = t.content;
-        if (hConn && Math.abs(t.x - hConn.x) < colTolerance) rowsMap[rowKey].connector = t.content;
-        if (hOem && Math.abs(t.x - hOem.x) < colTolerance) rowsMap[rowKey].oemItem = t.content;
+      setDxfInfo({
+        total: dxf.entities.length,
+        layers: Object.keys(dxf.tables.layer.layers).length
       });
-
-      const finalRows = Object.values(rowsMap)
-        .filter(r => r.item && !isNaN(parseInt(r.item)))
-        .sort((a, b) => parseInt(a.item) - parseInt(b.item));
-
-      setAsociadoTable(finalRows);
-      if (finalRows.length === 0) setError("Se encontró el encabezado pero no hay datos numéricos debajo.");
-
     } catch (err) {
-      console.error(err);
-      setError("Error crítico al leer el archivo DXF.");
+      alert("Error al leer el DXF");
     }
-  }
+  };
 
   return (
-    <div style={{ padding: "40px", fontFamily: "sans-serif", backgroundColor: "#f4f7f6", minHeight: "100vh" }}>
-      <h1 style={{ color: "#2c3e50" }}>Harness CAD Analyzer</h1>
-      
-      <div style={{ background: "white", padding: "20px", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)", marginBottom: "20px" }}>
-        <p>Sube tu archivo DXF para extraer la tabla <b>Asociado</b>:</p>
-        <input type="file" onChange={handleFile} accept=".dxf" />
-        {error && <p style={{ color: "red", marginTop: "10px" }}>{error}</p>}
+    <div style={{ padding: "30px", fontFamily: "Segoe UI, sans-serif", backgroundColor: "#f4f7f9", minHeight: "100vh" }}>
+      <h1 style={{ color: "#2c3e50", textAlign: "center" }}>Harness CAD & Data Analyzer</h1>
+
+      <div style={{ display: "flex", gap: "20px", justifyContent: "center", marginBottom: "30px" }}>
+        {/* Card DXF */}
+        <div style={cardStyle}>
+          <h3>📁 Dibujo DXF</h3>
+          <input type="file" onChange={handleDxf} accept=".dxf" />
+          {dxfInfo && <p>✅ {dxfInfo.total} entidades detectadas</p>}
+        </div>
+
+        {/* Card Excel */}
+        <div style={cardStyle}>
+          <h3>📊 Tabla Asociado (Excel)</h3>
+          <input type="file" onChange={handleExcel} accept=".xlsx, .xls, .csv" />
+          {asociadoData.length > 0 && <p>✅ {asociadoData.length} filas cargadas</p>}
+        </div>
       </div>
 
-      {asociadoTable.length > 0 && (
-        <div style={{ background: "white", borderRadius: "8px", overflow: "hidden", boxShadow: "0 4px 6px rgba(0,0,0,0.1)" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ backgroundColor: "#3498db", color: "white", textAlign: "left" }}>
-                <th style={{ padding: "12px" }}>ITEM #</th>
-                <th style={{ padding: "12px" }}>CONNECTOR</th>
-                <th style={{ padding: "12px" }}>CONNECTOR OEM ITEM</th>
-              </tr>
-            </thead>
-            <tbody>
-              {asociadoTable.map((row, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid #eee", backgroundColor: i % 2 === 0 ? "#fff" : "#f9f9f9" }}>
-                  <td style={{ padding: "12px", fontWeight: "bold" }}>{row.item}</td>
-                  <td style={{ padding: "12px" }}>{row.connector || "-"}</td>
-                  <td style={{ padding: "12px" }}>{row.oemItem || "-"}</td>
+      {/* Vista previa de la tabla */}
+      {asociadoData.length > 0 && (
+        <div style={{ background: "white", padding: "20px", borderRadius: "12px", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}>
+          <h2 style={{ color: "#3498db" }}>Vista Previa: Tabla Asociado</h2>
+          <div style={{ overflowX: "auto" }}>
+            <table style={tableStyle}>
+              <thead>
+                <tr style={{ backgroundColor: "#3498db", color: "white" }}>
+                  {Object.keys(asociadoData[0]).map((key) => (
+                    <th key={key} style={thStyle}>{key}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {asociadoData.slice(0, 10).map((row, i) => ( // Mostramos las primeras 10 filas
+                  <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
+                    {Object.values(row).map((val, j) => (
+                      <td key={j} style={tdStyle}>{val}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {asociadoData.length > 10 && <p style={{ textAlign: "center", color: "#666" }}>... Mostrando solo las primeras 10 filas ...</p>}
         </div>
       )}
     </div>
   );
 }
+
+// Estilos rápidos
+const cardStyle = {
+  background: "white",
+  padding: "20px",
+  borderRadius: "12px",
+  boxShadow: "0 4px 6px rgba(0,0,0,0.05)",
+  width: "350px"
+};
+
+const tableStyle = {
+  width: "100%",
+  borderCollapse: "collapse",
+  marginTop: "10px"
+};
+
+const thStyle = { padding: "12px", textAlign: "left", textTransform: "uppercase", fontSize: "13px" };
+const tdStyle = { padding: "12px", fontSize: "14px" };
