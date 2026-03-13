@@ -19,39 +19,55 @@ const handleExcel = (e) => {
       const wb = XLSX.read(bstr, { type: "binary" });
       const ws = wb.Sheets[wb.SheetNames[0]];
 
-      // 1. Convertimos a una matriz de filas (Array of Arrays) para manipular índices
-      const rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+      // 1. Obtener matriz cruda (Array of Arrays)
+      let rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
 
-      // 2. Extraer Número de Parte (Celda A4 -> Fila 3 en índice 0)
+      // 2. Extraer Número de Parte (Celda A4 -> Fila índice 3, Columna índice 0)
       const pNumber = rawData[3] ? rawData[3][0] : "Desconocido";
       setPartNumber(pNumber);
 
-      // 3. Definir Encabezado (Unir filas 5, 6 y 7 -> Índices 4, 5, 6)
-      // Como están combinadas, buscamos los textos en esas tres filas
-      const headerRow = rawData[4].map((_, colIndex) => {
-        const val5 = rawData[4][colIndex] || "";
-        const val6 = rawData[5][colIndex] || "";
-        const val7 = rawData[6][colIndex] || "";
-        return `${val5} ${val6} ${val7}`.trim();
+      // --- FILTRO DE COLUMNAS ---
+      // Definimos los índices de las columnas que queremos ELIMINAR
+      // C=2, E=4, H=7, J=9, M=12, S=18, T=19, U=20
+      const columnsToDelete = [2, 4, 7, 9, 12, 18, 19, 20];
+
+      // Función para limpiar una fila de las columnas prohibidas
+      const filterColumns = (row) => {
+        return row.filter((_, index) => !columnsToDelete.includes(index));
+      };
+
+      // 3. Procesar Encabezado (Filas 5, 6, 7 -> índices 4, 5, 6)
+      // Primero filtramos las columnas en esas filas y luego las combinamos
+      const hRow1 = filterColumns(rawData[4] || []);
+      const hRow2 = filterColumns(rawData[5] || []);
+      const hRow3 = filterColumns(rawData[6] || []);
+
+      const finalHeader = hRow1.map((_, colIndex) => {
+        const val1 = hRow1[colIndex] || "";
+        const val2 = hRow2[colIndex] || "";
+        const val3 = hRow3[colIndex] || "";
+        return `${val1} ${val2} ${val3}`.trim().replace(/\s+/g, ' '); 
       });
 
-      // 4. Extraer Datos (A partir de fila 8 -> Índice 7)
+      // 4. Procesar Datos (A partir de fila 8 -> índice 7)
       let dataRows = rawData.slice(7);
 
-      // 5. Limpieza: Borrar a partir de la primera fila vacía
+      // Encontrar fila vacía para el corte
       const firstEmptyRowIndex = dataRows.findIndex(row => 
         row.every(cell => cell === null || cell === "")
       );
-
       if (firstEmptyRowIndex !== -1) {
         dataRows = dataRows.slice(0, firstEmptyRowIndex);
       }
 
-      // 6. Formatear para la tabla (Array de objetos usando el nuevo encabezado)
+      // 5. Mapear datos finales filtrando las columnas y usando el nuevo encabezado
       const formattedData = dataRows.map((row) => {
+        const filteredRow = filterColumns(row);
         const obj = {};
-        headerRow.forEach((header, index) => {
-          if (header) obj[header] = row[index] || "";
+        finalHeader.forEach((header, index) => {
+          // Usamos un nombre genérico si el encabezado quedó vacío tras la limpieza
+          const colName = header || `Columna_${index}`;
+          obj[colName] = filteredRow[index] || "";
         });
         return obj;
       });
