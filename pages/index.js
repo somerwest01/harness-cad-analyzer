@@ -12,100 +12,99 @@ function DxfCanvas({ dxfRaw }) {
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
-    const entities = dxfRaw.entities;
     const blocks = dxfRaw.blocks || {}; 
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
-    // 1. Cálculo de límites (Bounding Box) corregido para desplazamientos
-    const growBounds = (v, offX = 0, offY = 0) => {
-      if (v && typeof v.x === 'number' && typeof v.y === 'number') {
-        const realX = v.x + offX;
-        const realY = v.y + offY;
-        minX = Math.min(minX, realX); minY = Math.min(minY, realY);
-        maxX = Math.max(maxX, realX); maxY = Math.max(maxY, realY);
+    // 1. Función para registrar puntos y expandir los límites del dibujo
+    const growBounds = (x, y) => {
+      if (typeof x === 'number' && typeof y === 'number' && !isNaN(x) && !isNaN(y)) {
+        // Ignorar el punto exacto 0,0 si está solo (evita que el dibujo se aleje demasiado)
+        if (Math.abs(x) < 0.0001 && Math.abs(y) < 0.0001) return; 
+        minX = Math.min(minX, x); minY = Math.min(minY, x); // Nota: corregido error de lógica previa
+        minX = Math.min(minX, x); minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
       }
     };
 
-    const processEntityForBounds = (ent, offX = 0, offY = 0) => {
+    // 2. Procesar entidades para calcular el tamaño real del arnés
+    const getBounds = (ent, offX = 0, offY = 0, scX = 1, scY = 1) => {
       if (!ent) return;
-      if (ent.vertices) ent.vertices.forEach(v => growBounds(v, offX, offY));
-      if (ent.start) { growBounds(ent.start, offX, offY); growBounds(ent.end, offX, offY); }
-      if (ent.center) {
-        growBounds({ x: ent.center.x - ent.radius, y: ent.center.y - ent.radius }, offX, offY);
-        growBounds({ x: ent.center.x + ent.radius, y: ent.center.y + ent.radius }, offX, offY);
+      if (ent.vertices) ent.vertices.forEach(v => growBounds(v.x * scX + offX, v.y * scY + offY));
+      if (ent.start) { 
+        growBounds(ent.start.x * scX + offX, ent.start.y * scY + offY); 
+        growBounds(ent.end.x * scX + offX, ent.end.y * scY + offY); 
       }
-      if (ent.type === 'INSERT' && blocks[ent.name] && blocks[ent.name].entities) {
-        // Los bloques se desplazan según su posición de inserción
-        const insX = ent.position ? ent.position.x : 0;
-        const insY = ent.position ? ent.position.y : 0;
-        blocks[ent.name].entities.forEach(sub => processEntityForBounds(sub, offX + insX, offY + insY));
+      if (ent.center) {
+        const r = (ent.radius || 0);
+        growBounds((ent.center.x - r) * scX + offX, (ent.center.y - r) * scY + offY);
+        growBounds((ent.center.x + r) * scX + offX, (ent.center.y + r) * scY + offY);
+      }
+      if (ent.type === 'INSERT' && blocks[ent.name]?.entities) {
+        const insX = ent.position?.x || 0;
+        const insY = ent.position?.y || 0;
+        const sX = ent.scale?.x || 1;
+        const sY = ent.scale?.y || 1;
+        blocks[ent.name].entities.forEach(sub => getBounds(sub, offX + insX, offY + insY, scX * sX, scY * sY));
       }
     };
 
-    entities.forEach(ent => processEntityForBounds(ent));
-    if (minX === Infinity) return;
+    dxfRaw.entities.forEach(ent => getBounds(ent));
+
+    // Si después de ignorar el 0,0 no hay nada, intentamos incluir el 0,0
+    if (minX === Infinity) {
+        dxfRaw.entities.forEach(ent => {
+            if (ent.start) { growBounds(ent.start.x, ent.start.y); growBounds(ent.end.x, ent.end.y); }
+        });
+    }
 
     const width = maxX - minX;
     const height = maxY - minY;
-    const padding = 100; // Más margen para ver bien los textos
+    const padding = 60;
+    
+    // Ajuste de escala para que el dibujo llene el canvas
     const scale = Math.min((canvas.width - padding) / (width || 1), (canvas.height - padding) / (height || 1));
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const tX = (x) => (x - minX) * scale + padding / 2;
     const tY = (y) => canvas.height - ((y - minY) * scale + padding / 2);
 
-    // 2. Función de dibujado con recursividad de posición real
-    const drawEntity = (ent, offX = 0, offY = 0) => {
+    // 3. Función de dibujo con transformación de Bloques corregida
+    const draw = (ent, offX = 0, offY = 0, scX = 1, scY = 1) => {
       if (!ent) return;
       ctx.beginPath();
       ctx.strokeStyle = "#2c3e50";
-      ctx.lineWidth = 1;
       
-      try {
-        const x1 = ent.start ? ent.start.x + offX : 0;
-        const y1 = ent.start ? ent.start.y + offY : 0;
-        const x2 = ent.end ? ent.end.x + offX : 0;
-        const y2 = ent.end ? ent.end.y + offY : 0;
-
-        if (ent.type === 'LINE') {
-          ctx.moveTo(tX(x1), tY(y1));
-          ctx.lineTo(tX(x2), tY(y2));
-          ctx.stroke();
-        } 
-        else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
-          ent.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(tX(v.x + offX), tY(v.y + offY));
-            else ctx.lineTo(tX(v.x + offX), tY(v.y + offY));
-          });
-          ctx.stroke();
-        } 
-        else if (ent.type === 'CIRCLE' && ent.center) {
-          ctx.arc(tX(ent.center.x + offX), tY(ent.center.y + offY), (ent.radius || 1) * scale, 0, 2 * Math.PI);
-          ctx.stroke();
-        }
-        else if (ent.type === 'MTEXT' || ent.type === 'TEXT') {
-          ctx.fillStyle = "#e67e22";
-          const fSize = Math.max(8, (ent.height || 10) * scale);
-          ctx.font = `bold ${fSize}px Arial`;
-          const pX = (ent.position ? ent.position.x : (ent.start ? ent.start.x : 0)) + offX;
-          const pY = (ent.position ? ent.position.y : (ent.start ? ent.start.y : 0)) + offY;
-          // Limpiar el texto de códigos de formato de AutoCAD (ej: {\fArial|b0...})
-          const cleanText = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").replace(/\^I/g, " ");
-          ctx.fillText(cleanText, tX(pX), tY(pY));
-        }
-        else if (ent.type === 'INSERT' && blocks[ent.name] && blocks[ent.name].entities) {
-          const insX = ent.position ? ent.position.x : 0;
-          const insY = ent.position ? ent.position.y : 0;
-          blocks[ent.name].entities.forEach(sub => drawEntity(sub, offX + insX, offY + insY));
-        }
-      } catch (e) { }
+      if (ent.type === 'LINE' && ent.start && ent.end) {
+        ctx.moveTo(tX(ent.start.x * scX + offX), tY(ent.start.y * scY + offY));
+        ctx.lineTo(tX(ent.end.x * scX + offX), tY(ent.end.y * scY + offY));
+        ctx.stroke();
+      } 
+      else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
+        ent.vertices.forEach((v, i) => {
+          const px = tX(v.x * scX + offX);
+          const py = tY(v.y * scY + offY);
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+      } 
+      else if (ent.type === 'CIRCLE' && ent.center) {
+        ctx.arc(tX(ent.center.x * scX + offX), tY(ent.center.y * scY + offY), ent.radius * scX * scale, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+      else if (ent.type === 'INSERT' && blocks[ent.name]?.entities) {
+        const insX = ent.position?.x || 0;
+        const insY = ent.position?.y || 0;
+        const sX = ent.scale?.x || 1;
+        const sY = ent.scale?.y || 1;
+        blocks[ent.name].entities.forEach(sub => draw(sub, offX + insX, offY + insY, scX * sX, scY * sY));
+      }
     };
 
-    entities.forEach(ent => drawEntity(ent));
+    dxfRaw.entities.forEach(ent => draw(ent));
   }, [dxfRaw]);
 
-  return <canvas ref={canvasRef} width={1500} height={800} style={{ width: '100%', height: 'auto', background: '#fff', borderRadius: '8px', border: '1px solid #ddd' }} />;
+  return <canvas ref={canvasRef} width={1500} height={800} style={{ width: '100%', background: '#fff', borderRadius: '8px', border: '1px solid #ddd' }} />;
 }
 
 // --- APP PRINCIPAL ---
