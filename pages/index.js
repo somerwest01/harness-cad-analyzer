@@ -12,99 +12,75 @@ function DxfCanvas({ dxfRaw }) {
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
-    const blocks = dxfRaw.blocks || {}; 
-
+    
+    // 1. Cálculo de límites ignorando el 0,0 absoluto si está lejos del dibujo
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
-    // 1. Función para registrar puntos y expandir los límites del dibujo
-    const growBounds = (x, y) => {
-      if (typeof x === 'number' && typeof y === 'number' && !isNaN(x) && !isNaN(y)) {
-        // Ignorar el punto exacto 0,0 si está solo (evita que el dibujo se aleje demasiado)
-        if (Math.abs(x) < 0.0001 && Math.abs(y) < 0.0001) return; 
-        minX = Math.min(minX, x); minY = Math.min(minY, x); // Nota: corregido error de lógica previa
-        minX = Math.min(minX, x); minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
-      }
-    };
-
-    // 2. Procesar entidades para calcular el tamaño real del arnés
-    const getBounds = (ent, offX = 0, offY = 0, scX = 1, scY = 1) => {
-      if (!ent) return;
-      if (ent.vertices) ent.vertices.forEach(v => growBounds(v.x * scX + offX, v.y * scY + offY));
-      if (ent.start) { 
-        growBounds(ent.start.x * scX + offX, ent.start.y * scY + offY); 
-        growBounds(ent.end.x * scX + offX, ent.end.y * scY + offY); 
-      }
+    dxfRaw.entities.forEach(ent => {
+      const points = [];
+      if (ent.vertices) points.push(...ent.vertices);
+      if (ent.start) { points.push(ent.start); points.push(ent.end); }
+      if (ent.position) points.push(ent.position);
       if (ent.center) {
-        const r = (ent.radius || 0);
-        growBounds((ent.center.x - r) * scX + offX, (ent.center.y - r) * scY + offY);
-        growBounds((ent.center.x + r) * scX + offX, (ent.center.y + r) * scY + offY);
+        points.push({ x: ent.center.x - (ent.radius || 0), y: ent.center.y - (ent.radius || 0) });
+        points.push({ x: ent.center.x + (ent.radius || 0), y: ent.center.y + (ent.radius || 0) });
       }
-      if (ent.type === 'INSERT' && blocks[ent.name]?.entities) {
-        const insX = ent.position?.x || 0;
-        const insY = ent.position?.y || 0;
-        const sX = ent.scale?.x || 1;
-        const sY = ent.scale?.y || 1;
-        blocks[ent.name].entities.forEach(sub => getBounds(sub, offX + insX, offY + insY, scX * sX, scY * sY));
-      }
-    };
 
-    dxfRaw.entities.forEach(ent => getBounds(ent));
+      points.forEach(p => {
+        // Filtro para evitar que puntos aislados en el origen arruinen el zoom
+        if (Math.abs(p.x) < 0.001 && Math.abs(p.y) < 0.001 && dxfRaw.entities.length > 10) return;
+        if (!isNaN(p.x) && !isNaN(p.y)) {
+          minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+          maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+        }
+      });
+    });
 
-    // Si después de ignorar el 0,0 no hay nada, intentamos incluir el 0,0
-    if (minX === Infinity) {
-        dxfRaw.entities.forEach(ent => {
-            if (ent.start) { growBounds(ent.start.x, ent.start.y); growBounds(ent.end.x, ent.end.y); }
-        });
-    }
+    if (minX === Infinity) return;
 
     const width = maxX - minX;
     const height = maxY - minY;
-    const padding = 60;
-    
-    // Ajuste de escala para que el dibujo llene el canvas
+    const padding = 100;
     const scale = Math.min((canvas.width - padding) / (width || 1), (canvas.height - padding) / (height || 1));
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const tX = (x) => (x - minX) * scale + padding / 2;
     const tY = (y) => canvas.height - ((y - minY) * scale + padding / 2);
 
-    // 3. Función de dibujo con transformación de Bloques corregida
-    const draw = (ent, offX = 0, offY = 0, scX = 1, scY = 1) => {
-      if (!ent) return;
+    // 2. Dibujo directo de entidades simples (Post-Explode)
+    dxfRaw.entities.forEach(ent => {
       ctx.beginPath();
       ctx.strokeStyle = "#2c3e50";
-      
-      if (ent.type === 'LINE' && ent.start && ent.end) {
-        ctx.moveTo(tX(ent.start.x * scX + offX), tY(ent.start.y * scY + offY));
-        ctx.lineTo(tX(ent.end.x * scX + offX), tY(ent.end.y * scY + offY));
+      ctx.lineWidth = 1;
+
+      if (ent.type === 'LINE') {
+        ctx.moveTo(tX(ent.start.x), tY(ent.start.y));
+        ctx.lineTo(tX(ent.end.x), tY(ent.end.y));
         ctx.stroke();
       } 
       else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
         ent.vertices.forEach((v, i) => {
-          const px = tX(v.x * scX + offX);
-          const py = tY(v.y * scY + offY);
-          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          if (i === 0) ctx.moveTo(tX(v.x), tY(v.y));
+          else ctx.lineTo(tX(v.x), tY(v.y));
         });
         ctx.stroke();
       } 
-      else if (ent.type === 'CIRCLE' && ent.center) {
-        ctx.arc(tX(ent.center.x * scX + offX), tY(ent.center.y * scY + offY), ent.radius * scX * scale, 0, 2 * Math.PI);
+      else if (ent.type === 'CIRCLE') {
+        ctx.arc(tX(ent.center.x), tY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
         ctx.stroke();
       }
-      else if (ent.type === 'INSERT' && blocks[ent.name]?.entities) {
-        const insX = ent.position?.x || 0;
-        const insY = ent.position?.y || 0;
-        const sX = ent.scale?.x || 1;
-        const sY = ent.scale?.y || 1;
-        blocks[ent.name].entities.forEach(sub => draw(sub, offX + insX, offY + insY, scX * sX, scY * sY));
+      else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+        ctx.fillStyle = "#e67e22";
+        const fSize = Math.max(9, (ent.height || 10) * scale);
+        ctx.font = `bold ${fSize}px Arial`;
+        const p = ent.position || ent.start || { x: 0, y: 0 };
+        const cleanTxt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ");
+        ctx.fillText(cleanTxt, tX(p.x), tY(p.y));
       }
-    };
-
-    dxfRaw.entities.forEach(ent => draw(ent));
+    });
   }, [dxfRaw]);
 
-  return <canvas ref={canvasRef} width={1500} height={800} style={{ width: '100%', background: '#fff', borderRadius: '8px', border: '1px solid #ddd' }} />;
+  return <canvas ref={canvasRef} width={1600} height={900} style={{ width: '100%', background: '#fff', borderRadius: '8px' }} />;
 }
 
 // --- APP PRINCIPAL ---
