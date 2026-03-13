@@ -90,3 +90,9 @@
   font-weight: bold;
   margin-top: 10px;
 }
+
+.table td:first-child {
+  font-weight: bold;
+  text-align: center;
+  background-color: #fcfcfc;
+}
