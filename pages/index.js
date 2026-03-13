@@ -7,6 +7,7 @@ export default function Home() {
   const [dxfInfo, setDxfInfo] = useState(null);
   const [asociadoData, setAsociadoData] = useState([]);
   const [partNumber, setPartNumber] = useState("");
+  const [isTableVisible, setIsTableVisible] = useState(true);
 
   // --- Procesador de Excel ---
 const handleExcel = (e) => {
@@ -95,52 +96,49 @@ const handleExcel = (e) => {
     }
   };
 
-  return (
+return (
     <div className={styles.container}>
       <h1 className={styles.title}>Harness CAD & Data Analyzer</h1>
 
       <div className={styles.cardsContainer}>
-        {/* Card DXF */}
-        <div className={styles.card}>
-          <h3>📁 Dibujo DXF</h3>
-          <input type="file" onChange={handleDxf} accept=".dxf" />
-          {dxfInfo && <p className={styles.statusOk}>✅ {dxfInfo.total} entidades</p>}
-        </div>
-
-        {/* Card Excel */}
-        <div className={styles.card}>
-          <h3>📊 Tabla Asociado (Excel)</h3>
-          <input type="file" onChange={handleExcel} accept=".xlsx, .xls" />
-          {asociadoData.length > 0 && <p className={styles.statusOk}>✅ {asociadoData.length} filas</p>}
-        </div>
+        {/* Aquí tus cards de carga de archivos... */}
       </div>
 
-      {/* Vista previa de la tabla */}
       {asociadoData.length > 0 && (
         <div className={styles.tableContainer}>
-          <h2 style={{ color: "#3498db" }}>Vista Previa: Tabla Asociado</h2>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                {Object.keys(asociadoData[0]).map((key) => (
-                  <th key={key}>{key}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {asociadoData.slice(0, 10).map((row, i) => (
-                <tr key={i}>
-                  {Object.values(row).map((val, j) => (
-                    <td key={j}>{val}</td>
+          {/* Encabezado colapsable */}
+          <div 
+            className={styles.collapsibleHeader} 
+            onClick={() => setIsTableVisible(!isTableVisible)}
+          >
+            <h2 style={{ margin: 0, fontSize: '1.2rem' }}>
+              Vista Previa: <span style={{ color: "#fff", fontWeight: "bold", textDecoration: 'underline' }}>{partNumber}</span>
+            </h2>
+            <span>{isTableVisible ? "▲ Contraer" : "▼ Expandir"}</span>
+          </div>
+
+          {/* Cuerpo de la tabla con Scroll y visibilidad condicional */}
+          {isTableVisible && (
+            <div className={styles.scrollArea}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    {Object.keys(asociadoData[0]).map((key) => (
+                      <th key={key}>{key}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {asociadoData.map((row, i) => (
+                    <tr key={i}>
+                      {Object.values(row).map((val, j) => (
+                        <td key={j}>{val}</td>
+                      ))}
+                    </tr>
                   ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {asociadoData.length > 10 && (
-            <p style={{ textAlign: "center", color: "#666", marginTop: "10px" }}>
-              Mostrando las primeras 10 filas de {asociadoData.length}
-            </p>
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
