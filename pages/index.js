@@ -6,9 +6,10 @@ import styles from "./Home.module.css"; // Importamos los estilos
 export default function Home() {
   const [dxfInfo, setDxfInfo] = useState(null);
   const [asociadoData, setAsociadoData] = useState([]);
+  const [partNumber, setPartNumber] = useState("");
 
   // --- Procesador de Excel ---
-  const handleExcel = (e) => {
+const handleExcel = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
@@ -17,8 +18,45 @@ export default function Home() {
       const bstr = evt.target.result;
       const wb = XLSX.read(bstr, { type: "binary" });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const data = XLSX.utils.sheet_to_json(ws);
-      setAsociadoData(data);
+
+      // 1. Convertimos a una matriz de filas (Array of Arrays) para manipular índices
+      const rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+
+      // 2. Extraer Número de Parte (Celda A4 -> Fila 3 en índice 0)
+      const pNumber = rawData[3] ? rawData[3][0] : "Desconocido";
+      setPartNumber(pNumber);
+
+      // 3. Definir Encabezado (Unir filas 5, 6 y 7 -> Índices 4, 5, 6)
+      // Como están combinadas, buscamos los textos en esas tres filas
+      const headerRow = rawData[4].map((_, colIndex) => {
+        const val5 = rawData[4][colIndex] || "";
+        const val6 = rawData[5][colIndex] || "";
+        const val7 = rawData[6][colIndex] || "";
+        return `${val5} ${val6} ${val7}`.trim();
+      });
+
+      // 4. Extraer Datos (A partir de fila 8 -> Índice 7)
+      let dataRows = rawData.slice(7);
+
+      // 5. Limpieza: Borrar a partir de la primera fila vacía
+      const firstEmptyRowIndex = dataRows.findIndex(row => 
+        row.every(cell => cell === null || cell === "")
+      );
+
+      if (firstEmptyRowIndex !== -1) {
+        dataRows = dataRows.slice(0, firstEmptyRowIndex);
+      }
+
+      // 6. Formatear para la tabla (Array de objetos usando el nuevo encabezado)
+      const formattedData = dataRows.map((row) => {
+        const obj = {};
+        headerRow.forEach((header, index) => {
+          if (header) obj[header] = row[index] || "";
+        });
+        return obj;
+      });
+
+      setAsociadoData(formattedData);
     };
     reader.readAsBinaryString(file);
   };
