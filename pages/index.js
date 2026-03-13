@@ -58,6 +58,8 @@ export default function Home() {
       const formattedData = dataRows.map((row) => {
         const filteredRow = filterColumns(row);
         const obj = {};
+        obj["Status"] = "⏳ Pendiente";
+        
         finalHeader.forEach((header, index) => {
           const colName = header || `Columna_${index}`;
           obj[colName] = filteredRow[index] || "";
