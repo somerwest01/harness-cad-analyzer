@@ -8,11 +8,13 @@ function DxfCanvas({ entities }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    if (!entities || !canvasRef.current) return;
+    // Si no hay entidades, no hacemos nada
+    if (!entities || entities.length === 0 || !canvasRef.current) return;
+    
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     
-    // 1. Calcular límites (Bounding Box) para centrar y escalar
+    // 1. Calcular límites extremos (Bounding Box)
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
     entities.forEach(e => {
@@ -22,52 +24,71 @@ function DxfCanvas({ entities }) {
       if (e.end) points.push(e.end);
 
       points.forEach(v => {
-        minX = Math.min(minX, v.x); minY = Math.min(minY, v.y);
-        maxX = Math.max(maxX, v.x); maxY = Math.max(maxY, v.y);
+        if (v.x !== undefined && v.y !== undefined) {
+          minX = Math.min(minX, v.x); minY = Math.min(minY, v.y);
+          maxX = Math.max(maxX, v.x); maxY = Math.max(maxY, v.y);
+        }
       });
     });
 
+    // Validar que encontramos puntos válidos
+    if (minX === Infinity) return;
+
     const width = maxX - minX;
     const height = maxY - minY;
-    const padding = 40;
+    const padding = 50; // Margen para que no toque los bordes
     
-    // Evitar división por cero si el dibujo está vacío
-    const scale = width > 0 && height > 0 
-      ? Math.min((canvas.width - padding) / width, (canvas.height - padding) / height) 
-      : 1;
+    // Calculamos la escala para que el dibujo quepa perfectamente
+    const scale = Math.min(
+      (canvas.width - padding) / (width || 1), 
+      (canvas.height - padding) / (height || 1)
+    );
 
-    // 2. Dibujar en el Canvas
+    // 2. Limpiar y configurar estilo
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = "#2c3e50";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = "#2c3e50"; // Color oscuro para visibilidad
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = "round";
 
+    // 3. Función auxiliar para transformar coordenadas de DXF a Canvas
+    const transformX = (x) => (x - minX) * scale + padding / 2;
+    const transformY = (y) => canvas.height - ((y - minY) * scale + padding / 2);
+
+    // 4. Dibujar entidades
     entities.forEach(e => {
       ctx.beginPath();
       if (e.type === 'LINE' && e.start && e.end) {
-        ctx.moveTo((e.start.x - minX) * scale + padding/2, canvas.height - ((e.start.y - minY) * scale + padding/2));
-        ctx.lineTo((e.end.x - minX) * scale + padding/2, canvas.height - ((e.end.y - minY) * scale + padding/2));
+        ctx.moveTo(transformX(e.start.x), transformY(e.start.y));
+        ctx.lineTo(transformX(e.end.x), transformY(e.end.y));
+        ctx.stroke();
       } else if ((e.type === 'LWPOLYLINE' || e.type === 'POLYLINE') && e.vertices) {
         e.vertices.forEach((v, i) => {
-          const px = (v.x - minX) * scale + padding/2;
-          const py = canvas.height - ((v.y - minY) * scale + padding/2);
-          if (i === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
+          if (i === 0) ctx.moveTo(transformX(v.x), transformY(v.y));
+          else ctx.lineTo(transformX(v.x), transformY(v.y));
         });
+        ctx.stroke();
+      } else if (e.type === 'CIRCLE' && e.center) {
+        ctx.arc(transformX(e.center.x), transformY(e.center.y), e.radius * scale, 0, 2 * Math.PI);
+        ctx.stroke();
       }
-      ctx.stroke();
     });
-  }, [entities]);
+  }, [entities]); // Se ejecuta cada vez que 'entities' cambie
 
   return (
     <canvas 
       ref={canvasRef} 
-      width={800} 
-      height={400} 
-      style={{ width: '100%', background: '#ffffff', borderRadius: '8px', border: '1px solid #ddd' }} 
+      width={1200} // Aumentamos resolución
+      height={600} 
+      style={{ 
+        width: '100%', 
+        height: 'auto',
+        background: '#ffffff', 
+        borderRadius: '8px', 
+        border: '1px solid #ddd' 
+      }} 
     />
   );
 }
-
 // --- COMPONENTE PRINCIPAL ---
 export default function Home() {
   const [dxfData, setDxfData] = useState(null);
