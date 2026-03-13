@@ -4,36 +4,39 @@ import * as XLSX from "xlsx";
 import styles from "./Home.module.css";
 
 // --- COMPONENTE DEL VISOR (Dibuja el DXF en un Canvas) ---
-function DxfCanvas({ entities }) {
+function DxfCanvas({ dxfRaw }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    if (!entities || entities.length === 0 || !canvasRef.current) return;
+    if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
-    
-    // 1. Cálculo de límites (Bounding Box) más preciso
+    const entities = dxfRaw.entities;
+    const blocks = dxfRaw.blocks; // Importante para las referencias de bloques
+
+    // 1. Recolectar todos los puntos para el Bounding Box (incluyendo los de dentro de bloques)
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
-    entities.forEach(e => {
-      const points = [];
-      if (e.vertices) points.push(...e.vertices);
-      if (e.start) points.push(e.start);
-      if (e.end) points.push(e.end);
-      if (e.center) {
-        // Para círculos/arcos, calculamos los bordes
-        points.push({ x: e.center.x - e.radius, y: e.center.y - e.radius });
-        points.push({ x: e.center.x + e.radius, y: e.center.y + e.radius });
-      }
-
+    const growBounds = (points) => {
       points.forEach(v => {
-        if (v.x !== undefined && v.y !== undefined) {
+        if (v && v.x !== undefined && v.y !== undefined) {
           minX = Math.min(minX, v.x); minY = Math.min(minY, v.y);
           maxX = Math.max(maxX, v.x); maxY = Math.max(maxY, v.y);
         }
       });
-    });
+    };
+
+    const processEntityForBounds = (ent) => {
+      if (ent.vertices) growBounds(ent.vertices);
+      if (ent.start) growBounds([ent.start, ent.end]);
+      if (ent.center) growBounds([{ x: ent.center.x - ent.radius, y: ent.center.y - ent.radius }, { x: ent.center.x + ent.radius, y: ent.center.y + ent.radius }]);
+      if (ent.type === 'INSERT' && blocks[ent.name]) {
+        blocks[ent.name].entities.forEach(processEntityForBounds);
+      }
+    };
+
+    entities.forEach(processEntityForBounds);
 
     if (minX === Infinity) return;
 
@@ -43,50 +46,46 @@ function DxfCanvas({ entities }) {
     const scale = Math.min((canvas.width - padding) / (width || 1), (canvas.height - padding) / (height || 1));
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = "#2c3e50";
-    ctx.lineWidth = 1.2;
-
     const tX = (x) => (x - minX) * scale + padding / 2;
     const tY = (y) => canvas.height - ((y - minY) * scale + padding / 2);
 
-    // 2. Dibujado de entidades con mayor soporte
-    entities.forEach(e => {
+    // 2. Función de dibujado recursiva
+    const drawEntity = (ent, offsetX = 0, offsetY = 0) => {
       ctx.beginPath();
+      ctx.strokeStyle = "#2c3e50";
       
-      // Soporte para Líneas y Polilíneas
-      if (e.type === 'LINE' && e.start && e.end) {
-        ctx.moveTo(tX(e.start.x), tY(e.start.y));
-        ctx.lineTo(tX(e.end.x), tY(e.end.y));
+      if (ent.type === 'LINE') {
+        ctx.moveTo(tX(ent.start.x + offsetX), tY(ent.start.y + offsetY));
+        ctx.lineTo(tX(ent.end.x + offsetX), tY(ent.end.y + offsetY));
+        ctx.stroke();
       } 
-      else if ((e.type === 'LWPOLYLINE' || e.type === 'POLYLINE') && e.vertices) {
-        e.vertices.forEach((v, i) => {
-          if (i === 0) ctx.moveTo(tX(v.x), tY(v.y));
-          else ctx.lineTo(tX(v.x), tY(v.y));
+      else if (ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
+        ent.vertices.forEach((v, i) => {
+          if (i === 0) ctx.moveTo(tX(v.x + offsetX), tY(v.y + offsetY));
+          else ctx.lineTo(tX(v.x + offsetX), tY(v.y + offsetY));
         });
+        ctx.stroke();
       } 
-      // Soporte para Círculos
-      else if (e.type === 'CIRCLE' && e.center) {
-        ctx.arc(tX(e.center.x), tY(e.center.y), e.radius * scale, 0, 2 * Math.PI);
+      else if (ent.type === 'CIRCLE') {
+        ctx.arc(tX(ent.center.x + offsetX), tY(ent.center.y + offsetY), ent.radius * scale, 0, 2 * Math.PI);
+        ctx.stroke();
       }
-      // Soporte para Arcos (común en curvas de cables)
-      else if (e.type === 'ARC' && e.center) {
-        const startAngle = -e.startAngle * Math.PI / 180;
-        const endAngle = -e.endAngle * Math.PI / 180;
-        ctx.arc(tX(e.center.x), tY(e.center.y), e.radius * scale, startAngle, endAngle, true);
+      else if (ent.type === 'MTEXT' || ent.type === 'TEXT') {
+        ctx.fillStyle = "#34495e";
+        ctx.font = `${Math.max(8, (ent.height || 10) * scale)}px sans-serif`;
+        ctx.fillText(ent.text || ent.string || "", tX(ent.position.x + offsetX), tY(ent.position.y + offsetY));
       }
-      
-      ctx.stroke();
-    });
-  }, [entities]);
+      else if (ent.type === 'INSERT' && blocks[ent.name]) {
+        // Dibujamos el contenido del bloque desplazado a la posición del INSERT
+        blocks[ent.name].entities.forEach(subEnt => drawEntity(subEnt, ent.position.x, ent.position.y));
+      }
+    };
 
-  return (
-    <canvas 
-      ref={canvasRef} 
-      width={1200} 
-      height={700} 
-      style={{ width: '100%', height: 'auto', background: '#ffffff', borderRadius: '8px', border: '1px solid #ddd' }} 
-    />
-  );
+    entities.forEach(ent => drawEntity(ent));
+
+  }, [dxfRaw]);
+
+  return <canvas ref={canvasRef} width={1200} height={700} style={{ width: '100%', height: 'auto', background: '#fff', borderRadius: '8px', border: '1px solid #ddd' }} />;
 }
 // --- COMPONENTE PRINCIPAL ---
 export default function Home() {
@@ -181,7 +180,7 @@ export default function Home() {
 
       setDxfData({
         total: dxf.entities.length,
-        entities: dxf.entities,
+        entities: dxf,
         textEntities: dxfTexts.length,
         layers: Object.keys(dxf.tables.layer.layers)
       });
@@ -267,7 +266,7 @@ export default function Home() {
           </div>
           {isCanvasVisible && (
             <div style={{ padding: '20px', textAlign: 'center', background: '#ecf0f1' }}>
-              <DxfCanvas entities={dxfData.entities} />
+              <DxfCanvas dxfRaw={dxfData.raw} />
             </div>
           )}
         </div>
