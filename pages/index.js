@@ -11,7 +11,7 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  // 1. ZOOM Y LÍMITES
+  // 1. AUTO-ZOOM Y CENTRADO MEJORADO
   useEffect(() => {
     if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -26,17 +26,22 @@ function DxfCanvas({ dxfRaw }) {
     };
 
     dxfRaw.entities.forEach(ent => {
-      if (ent.vertices) ent.vertices.forEach(checkPoint);
-      if (ent.start) { checkPoint(ent.start); checkPoint(ent.end); }
-      if (ent.position) checkPoint(ent.position);
-      if (ent.center) checkPoint(ent.center);
+      try {
+        if (ent.vertices) ent.vertices.forEach(checkPoint);
+        if (ent.start) {
+          const dist = Math.hypot(ent.end.x - ent.start.x, ent.end.y - ent.start.y);
+          if (dist > 1) { checkPoint(ent.start); checkPoint(ent.end); }
+        }
+        if (ent.position) checkPoint(ent.position);
+        if (ent.center) checkPoint(ent.center);
+      } catch (e) {}
     });
 
+    if (minX === Infinity) return;
     const width = maxX - minX;
     const height = maxY - minY;
-    if (minX === Infinity) return;
-
     const initialScale = Math.min((canvas.width - 200) / (width || 1), (canvas.height - 200) / (height || 1));
+    
     setScale(initialScale);
     setOffset({
       x: (canvas.width / 2) - (minX + width / 2) * initialScale,
@@ -44,7 +49,7 @@ function DxfCanvas({ dxfRaw }) {
     });
   }, [dxfRaw]);
 
-  // 2. RENDERIZADO (Con fix de Arcos y Bloques)
+  // 2. MOTOR DE RENDERIZADO CON FIX PARA ARCOS Y TEXTO
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -54,73 +59,89 @@ function DxfCanvas({ dxfRaw }) {
     const dX = (x) => x * scale + offset.x;
     const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
-    const drawEnt = (ent, basePos = { x: 0, y: 0 }) => {
+    const drawEntity = (ent) => {
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = "#1e272e";
-      const x = (p) => dX(p.x + basePos.x);
-      const y = (p) => dY(p.y + basePos.y);
 
-      // LINEAS
+      // --- LÍNEAS ---
       if (ent.type === 'LINE' || ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
         ctx.beginPath();
-        if (ent.type === 'LINE') {
-          ctx.moveTo(x(ent.start), y(ent.start));
-          ctx.lineTo(x(ent.end), y(ent.end));
-        } else if (ent.vertices) {
+        if (ent.type === 'LINE' && ent.start && ent.end) {
+          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
+          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+        } else if (ent.vertices && ent.vertices.length > 1) {
           ent.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(x(v), y(v));
-            else ctx.lineTo(x(v), y(v));
+            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
+            else ctx.lineTo(dX(v.x), dY(v.y));
           });
         }
         ctx.stroke();
-      }
-      // ARCOS (Fix: Ángulos corregidos para sentido horario/antihorario)
+      } 
+      // --- ARCOS (FIX DEFINITIVO) ---
       else if (ent.type === 'ARC' && ent.center) {
         ctx.beginPath();
-        const sA = (360 - ent.endAngle) * Math.PI / 180;
-        const eA = (360 - ent.startAngle) * Math.PI / 180;
-        ctx.arc(dX(ent.center.x + basePos.x), dY(ent.center.y + basePos.y), ent.radius * scale, sA, eA, false);
+        // AutoCAD mide grados antihorarios desde el eje X positivo.
+        // Canvas invierte Y, por lo que los ángulos deben ser negativos.
+        const startAngle = -ent.startAngle * Math.PI / 180;
+        const endAngle = -ent.endAngle * Math.PI / 180;
+        // Dibujamos en sentido antihorario (true) para que coincida con AutoCAD
+        ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, startAngle, endAngle, true);
         ctx.stroke();
       }
-      // CIRCULOS
+      // --- CÍRCULOS ---
       else if (ent.type === 'CIRCLE' && ent.center) {
         ctx.beginPath();
         ctx.strokeStyle = "#0984e3";
-        ctx.arc(dX(ent.center.x + basePos.x), dY(ent.center.y + basePos.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
+        ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
         ctx.stroke();
       }
-      // TEXTO (Fix: Prioridad de renderizado)
+      // --- TEXTO (SOPORTE DE ALTO NIVEL) ---
       else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
         const txt = (ent.text || ent.string || ent.value || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
         if (txt && txt !== "0") {
-          const fontSize = Math.max(14, (ent.height || 5) * scale); 
+          const fontSize = Math.max(12, (ent.height || 6) * scale); 
           ctx.fillStyle = "#e67e22";
           ctx.font = `bold ${fontSize}px Arial`;
-          const p = ent.start || ent.position || { x: 0, y: 0 };
-          ctx.fillText(txt, x(p), y(p));
+          const p = ent.start || ent.position || ent.center || { x: 0, y: 0 };
+          ctx.fillText(txt, dX(p.x), dY(p.y));
         }
       }
-      // INSERT (Protección contra el error 'entities of undefined')
-      else if (ent.type === 'INSERT' && dxfRaw.blocks && dxfRaw.blocks[ent.name]) {
-        const block = dxfRaw.blocks[ent.name];
-        if (block.entities) {
-          block.entities.forEach(bEnt => drawEnt(bEnt, ent.position));
-        }
+      // --- INSERT (CON VALIDACIÓN PARA EVITAR EL ERROR) ---
+      else if (ent.type === 'INSERT' && dxfRaw.blocks && dxfRaw.blocks[ent.name] && dxfRaw.blocks[ent.name].entities) {
+        dxfRaw.blocks[ent.name].entities.forEach(blockEnt => {
+          const subEnt = { ...blockEnt };
+          // Traslación simple para elementos dentro del bloque
+          if (subEnt.position) {
+            subEnt.position = { x: subEnt.position.x + ent.position.x, y: subEnt.position.y + ent.position.y };
+          }
+          if (subEnt.start && subEnt.end) {
+            subEnt.start = { x: subEnt.start.x + ent.position.x, y: subEnt.start.y + ent.position.y };
+            subEnt.end = { x: subEnt.end.x + ent.position.x, y: subEnt.end.y + ent.position.y };
+          }
+          drawEntity(subEnt);
+        });
       }
     };
 
-    dxfRaw.entities.forEach(ent => drawEnt(ent));
+    dxfRaw.entities.forEach(drawEntity);
   }, [dxfRaw, scale, offset]);
 
+  // Manejadores de Mouse (Zoom y Pan)
+  const handleWheel = (e) => {
+    e.preventDefault();
+    const factor = Math.pow(1.1, -e.deltaY / 500);
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mX = e.clientX - rect.left;
+    const mY = e.clientY - rect.top;
+    setOffset(prev => ({ x: mX - (mX - prev.x) * factor, y: mY - (mY - prev.y) * factor }));
+    setScale(s => s * factor);
+  };
+
   return (
-    <div style={{ border: '2px solid #000', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
+    <div style={{ border: '2px solid #333', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
       <canvas 
         ref={canvasRef} width={2400} height={1200} 
-        onWheel={(e) => {
-          e.preventDefault();
-          const factor = Math.pow(1.1, -e.deltaY / 500);
-          setScale(s => s * factor);
-        }}
+        onWheel={handleWheel}
         onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
         onMouseMove={(e) => {
           if (!isDragging) return;
@@ -128,11 +149,13 @@ function DxfCanvas({ dxfRaw }) {
           setLastMousePos({ x: e.clientX, y: e.clientY });
         }}
         onMouseUp={() => setIsDragging(false)}
-        style={{ width: '100%', height: '700px', cursor: 'grab', background: '#fff' }} 
+        onMouseLeave={() => setIsDragging(false)}
+        style={{ width: '100%', height: '800px', cursor: isDragging ? 'grabbing' : 'grab' }} 
       />
     </div>
   );
 }
+
 export default function Home() {
   const [dxfData, setDxfData] = useState(null);
   const [asociadoData, setAsociadoData] = useState([]);
