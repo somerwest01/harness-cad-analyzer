@@ -11,113 +11,106 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  // 1. AUTO-ZOOM INTELIGENTE: Calcula los límites reales del arnés
+  // 1. AUTO-ZOOM INTELIGENTE (Ignora el 0,0 y centra el arnés)
   useEffect(() => {
     if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
     const canvas = canvasRef.current;
     
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
-    // Recorremos las entidades para encontrar el cuadro delimitador (Bounding Box)
+    // Buscamos los límites reales ignorando puntos basura en el origen
     dxfRaw.entities.forEach(ent => {
-      const checkPoint = (p) => {
-        if (p && typeof p.x === 'number') {
-          // FILTRO CRÍTICO: Ignoramos puntos en el origen 0,0 
-          // que AutoCAD suele dejar y que hacen que el dibujo se vea pequeño.
-          if (Math.abs(p.x) < 1 && Math.abs(p.y) < 1) return;
-          
-          minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-          maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-        }
-      };
+      const points = [];
+      if (ent.vertices) points.push(...ent.vertices);
+      if (ent.start) points.push(ent.start, ent.end);
+      if (ent.center) points.push(ent.center);
+      if (ent.position) points.push(ent.position);
 
-      if (ent.vertices) ent.vertices.forEach(checkPoint);
-      if (ent.start) { checkPoint(ent.start); checkPoint(ent.end); }
-      if (ent.center) checkPoint(ent.center);
-      if (ent.position) checkPoint(ent.position);
+      points.forEach(p => {
+        if (!p) return;
+        // FILTRO CRÍTICO: Si el punto está muy cerca del 0,0 lo ignoramos para el zoom
+        // porque tu dibujo real está en coordenadas > 1400
+        if (Math.abs(p.x) < 50 && Math.abs(p.y) < 50) return;
+
+        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+      });
     });
 
-    // Si no se encontró geometría válida fuera del origen
-    if (minX === Infinity) return;
+    // Si después del filtro no hay nada, intentamos sin filtro (caso de emergencia)
+    if (minX === Infinity) {
+      dxfRaw.entities.forEach(ent => {
+        if (ent.start) {
+          minX = Math.min(minX, ent.start.x); maxX = Math.max(maxX, ent.start.x);
+          minY = Math.min(minY, ent.start.y); maxY = Math.max(maxY, ent.start.y);
+        }
+      });
+    }
 
     const drawingWidth = maxX - minX;
     const drawingHeight = maxY - minY;
 
-    // Calculamos la escala para que el dibujo ocupe el 90% del canvas (padding de 50px)
-    const padding = 60;
-    const availableWidth = canvas.width - (padding * 2);
-    const availableHeight = canvas.height - (padding * 2);
+    // Escala: Dejamos un margen (padding) de 80px para que no pegue a los bordes
+    const padding = 80;
+    const scaleX = (canvas.width - padding) / (drawingWidth || 1);
+    const scaleY = (canvas.height - padding) / (drawingHeight || 1);
+    const newScale = Math.min(scaleX, scaleY);
 
-    const initialScale = Math.min(
-      availableWidth / (drawingWidth || 1), 
-      availableHeight / (drawingHeight || 1)
-    );
+    setScale(newScale);
 
-    setScale(initialScale);
-
-    // Centramos el dibujo en el canvas
+    // Centro exacto del dibujo trasladado al centro del canvas
     setOffset({
-      x: (canvas.width / 2) - (minX + drawingWidth / 2) * initialScale,
-      y: (canvas.height / 2) + (minY + drawingHeight / 2) * initialScale
+      x: (canvas.width / 2) - (minX + drawingWidth / 2) * newScale,
+      y: (canvas.height / 2) + (minY + drawingHeight / 2) * newScale
     });
   }, [dxfRaw]);
 
-  // 2. RENDERIZADO: Dibuja las entidades en el Canvas
+  // 2. MOTOR DE RENDERIZADO
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    
-    // Limpiamos el canvas antes de redibujar
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
-    // Funciones de conversión de coordenadas CAD -> Pantalla
     const dX = (x) => x * scale + offset.x;
-    const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
+    const dY = (y) => canvasRef.current.height - (y * scale + (canvasRef.current.height - offset.y));
 
     dxfRaw.entities.forEach(ent => {
-      try {
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = "#2c3e50"; // Color azul oscuro para cables
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "#2c3e50";
 
-        // --- LÍNEAS Y POLILÍNEAS ---
-        if (ent.type === 'LINE' && ent.start && ent.end) {
-          ctx.beginPath();
-          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
-          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
-          ctx.stroke();
-        } 
-        else if (ent.vertices && ent.vertices.length > 1) {
-          ctx.beginPath();
-          ent.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
-            else ctx.lineTo(dX(v.x), dY(v.y));
-          });
-          ctx.stroke();
-        }
-        // --- ARCOS Y CÍRCULOS (Conectores) ---
-        else if ((ent.type === 'ARC' || ent.type === 'CIRCLE') && ent.center) {
-          ctx.beginPath();
-          const sA = ent.type === 'ARC' ? (360 - ent.endAngle) * Math.PI / 180 : 0;
-          const eA = ent.type === 'ARC' ? (360 - ent.startAngle) * Math.PI / 180 : 2 * Math.PI;
-          ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 0) * scale, sA, eA, false);
-          ctx.stroke();
-        }
-        // --- TEXTO (Etiquetas de conectores) ---
-        else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-          const p = ent.start || ent.position;
-          if (p && (Math.abs(p.x) > 1 || Math.abs(p.y) > 1)) {
-            const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
-            if (txt && txt !== "0") {
-              const fontSize = Math.max(12, (ent.height || 3) * scale);
-              ctx.fillStyle = "#d35400"; // Color naranja para resaltar texto
-              ctx.font = `bold ${fontSize}px Arial`;
-              ctx.fillText(txt, dX(p.x), dY(p.y));
-            }
+      // Líneas y Polilíneas
+      if (ent.type === 'LINE' && ent.start && ent.end) {
+        ctx.beginPath();
+        ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
+        ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+        ctx.stroke();
+      } else if (ent.vertices && ent.vertices.length > 1) {
+        ctx.beginPath();
+        ent.vertices.forEach((v, i) => {
+          if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
+          else ctx.lineTo(dX(v.x), dY(v.y));
+        });
+        ctx.stroke();
+      }
+      // Arcos y Círculos
+      else if ((ent.type === 'ARC' || ent.type === 'CIRCLE') && ent.center) {
+        ctx.beginPath();
+        const sA = ent.type === 'ARC' ? (360 - ent.endAngle) * Math.PI / 180 : 0;
+        const eA = ent.type === 'ARC' ? (360 - ent.startAngle) * Math.PI / 180 : 2 * Math.PI;
+        ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, sA, eA, false);
+        ctx.stroke();
+      }
+      // Textos (Naranja para que resalten)
+      else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+        const p = ent.start || ent.position;
+        if (p && Math.abs(p.x) > 50) { // No dibujar textos basura en el 0,0
+          const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
+          if (txt && txt !== "0") {
+            ctx.fillStyle = "#e67e22";
+            ctx.font = `bold ${Math.max(12, (ent.height || 3) * scale)}px Arial`;
+            ctx.fillText(txt, dX(p.x), dY(p.y));
           }
         }
-      } catch (err) {
-        // Silenciamos errores de entidades individuales para no romper el visor
       }
     });
   }, [dxfRaw, scale, offset]);
