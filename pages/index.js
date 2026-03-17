@@ -16,7 +16,6 @@ function DxfCanvas({ dxfRaw }) {
     const canvas = canvasRef.current;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
-    // 1. Bounding Box con validación estricta
     dxfRaw.entities.forEach(ent => {
       try {
         const pts = [];
@@ -26,18 +25,19 @@ function DxfCanvas({ dxfRaw }) {
         
         pts.forEach(p => {
           if (p && typeof p.x === 'number' && typeof p.y === 'number') {
-            if (Math.abs(p.x) < 0.001 && Math.abs(p.y) < 0.001) return;
+            // Ignorar el 0,0 absoluto para que no aleje el zoom
+            if (Math.abs(p.x) < 0.01 && Math.abs(p.y) < 0.01 && dxfRaw.entities.length > 20) return;
             minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
             maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
           }
         });
-      } catch (e) { /* Saltar entidad corrupta */ }
+      } catch (e) {}
     });
 
     if (minX === Infinity) return;
     const width = maxX - minX;
     const height = maxY - minY;
-    const initialScale = Math.min((canvas.width - 100) / (width || 1), (canvas.height - 100) / (height || 1));
+    const initialScale = Math.min((canvas.width - 150) / (width || 1), (canvas.height - 150) / (height || 1));
     
     setScale(initialScale);
     setOffset({
@@ -55,45 +55,61 @@ function DxfCanvas({ dxfRaw }) {
     const dX = (x) => x * scale + offset.x;
     const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
-    // 2. Dibujo con protección contra errores (try-catch interno)
     dxfRaw.entities.forEach(ent => {
       try {
-        ctx.beginPath();
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = "#2c3e50";
+        // --- CONFIGURACIÓN DE TRAZO FUERTE ---
+        ctx.lineWidth = 1.5; 
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
 
-        if (ent.type === 'LINE' && ent.start && ent.end) {
-          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
-          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+        // 1. DIBUJAR LÍNEAS (Forzamos color negro para que sean visibles)
+        if (ent.type === 'LINE' || ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
+          ctx.beginPath();
+          ctx.strokeStyle = "#000000"; // Negro sólido
+          if (ent.type === 'LINE' && ent.start && ent.end) {
+            ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
+            ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+          } else if (ent.vertices && ent.vertices.length > 0) {
+            ent.vertices.forEach((v, i) => {
+              if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
+              else ctx.lineTo(dX(v.x), dY(v.y));
+            });
+          }
           ctx.stroke();
         } 
-        else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
-          ent.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
-            else ctx.lineTo(dX(v.x), dY(v.y));
-          });
-          ctx.stroke();
-        }
+        
+        // 2. DIBUJAR CÍRCULOS (Conectores)
         else if (ent.type === 'CIRCLE' && ent.center) {
-          ctx.strokeStyle = "#3498db";
+          ctx.beginPath();
+          ctx.strokeStyle = "#007bff"; // Azul brillante
           ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
           ctx.stroke();
         }
-        else if ((ent.type === 'TEXT' || ent.type === 'MTEXT') && scale > 0.5) {
-          const fontSize = Math.max(0.5, (ent.height || 2) * scale);
-          if (fontSize > 2) {
-            ctx.fillStyle = "#e67e22";
-            ctx.font = `${fontSize}px Arial`;
-            const p = ent.position || ent.start || { x: 0, y: 0 };
-            const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ");
-            ctx.fillText(txt, dX(p.x), dY(p.y));
+
+        // 3. DIBUJAR TEXTO (Con detección profunda de contenido)
+        else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+          // Extraer el texto de cualquier propiedad posible
+          const content = (ent.text || ent.string || ent.value || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
+          
+          if (content) {
+            // Si el height es muy pequeño o no existe, le damos uno por defecto (2.5 unidades CAD)
+            const textHeight = (ent.height && ent.height > 0) ? ent.height : 2.5;
+            const fontSize = textHeight * scale;
+
+            // Solo dibujar si es legible tras el zoom
+            if (fontSize > 1) {
+              ctx.fillStyle = "#ff5500"; // Naranja vibrante
+              ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+              const p = ent.position || ent.start || { x: 0, y: 0 };
+              ctx.fillText(content, dX(p.x), dY(p.y));
+            }
           }
         }
-      } catch (err) { /* Si una entidad falla, el resto sigue dibujándose */ }
+      } catch (err) {}
     });
   }, [dxfRaw, scale, offset]);
 
-  // Manejadores de Zoom/Pan (se mantienen iguales)
+  // Manejadores de eventos permanecen igual...
   const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 250);
@@ -105,7 +121,7 @@ function DxfCanvas({ dxfRaw }) {
   };
 
   return (
-    <div style={{ border: '1px solid #333', background: '#fff' }}>
+    <div style={{ border: '2px solid #333', borderRadius: '8px', overflow: 'hidden', background: '#f8f9fa' }}>
       <canvas 
         ref={canvasRef} width={2000} height={1000} 
         onWheel={handleWheel}
@@ -117,7 +133,7 @@ function DxfCanvas({ dxfRaw }) {
         }}
         onMouseUp={() => setIsDragging(false)}
         onMouseLeave={() => setIsDragging(false)}
-        style={{ width: '100%', height: '600px', cursor: isDragging ? 'grabbing' : 'grab' }} 
+        style={{ width: '100%', height: '700px', cursor: isDragging ? 'grabbing' : 'grab', background: '#ffffff' }} 
       />
     </div>
   );
