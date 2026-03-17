@@ -11,63 +11,60 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  // 1. CALIBRACIÓN DE COORDENADAS (Límites extraídos de tu DXF)
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
 
-    // Coordenadas detectadas en tu archivo 700176.dxf
-    const minX = 1413.27;
-    const maxX = 2047.99;
-    const minY = 481.35;
-    const maxY = 777.74;
+    // Límites específicos de tu archivo 700176.dxf
+    const minX = 1413.27, maxX = 2047.99;
+    const minY = 481.35, maxY = 777.74;
 
     const width = maxX - minX;
     const height = maxY - minY;
 
-    // Ajustamos la escala para que el arnés llene el 85% del canvas
-    const initialScale = Math.min(
-      (canvas.width * 0.85) / width,
-      (canvas.height * 0.85) / height
-    );
+    const initialScale = Math.min((canvas.width * 0.8) / width, (canvas.height * 0.8) / height);
 
     setScale(initialScale);
-    // Centramos el dibujo usando los límites reales
     setOffset({
       x: (canvas.width / 2) - (minX + width / 2) * initialScale,
       y: (canvas.height / 2) + (minY + height / 2) * initialScale
     });
   }, [dxfRaw]);
 
-  // 2. RENDERIZADOR RECURSIVO (Dibuja entidades Y bloques)
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
     const dX = (x) => x * scale + offset.x;
-    const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
+    const dY = (y) => canvasRef.current.height - (y * scale + (canvasRef.current.height - offset.y));
 
     const drawEnt = (ent, basePos = { x: 0, y: 0 }) => {
-      ctx.lineWidth = 1;
+      // --- PROTECCIÓN CRÍTICA: Validar que la entidad existe ---
+      if (!ent) return;
+
+      const getX = (p) => p ? dX(p.x + (basePos.x || 0)) : 0;
+      const getY = (p) => p ? dY(p.y + (basePos.y || 0)) : 0;
+
+      ctx.lineWidth = 1.2;
       ctx.strokeStyle = "#2c3e50";
 
-      const x = (v) => dX(v.x + basePos.x);
-      const y = (v) => dY(v.y + basePos.y);
-
-      // LINEAS Y POLILINEAS
-      if (ent.type === 'LINE' || ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
+      // LÍNEAS (Con validación de start y end)
+      if (ent.type === 'LINE' && ent.start && ent.end) {
         ctx.beginPath();
-        if (ent.type === 'LINE') {
-          ctx.moveTo(x(ent.start), y(ent.start));
-          ctx.lineTo(x(ent.end), y(ent.end));
-        } else if (ent.vertices) {
-          ent.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(x(v), y(v));
-            else ctx.lineTo(x(v), y(v));
-          });
-        }
+        ctx.moveTo(getX(ent.start), getY(ent.start));
+        ctx.lineTo(getX(ent.end), getY(ent.end));
+        ctx.stroke();
+      } 
+      // POLILÍNEAS
+      else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
+        ctx.beginPath();
+        ent.vertices.forEach((v, i) => {
+          if (v) {
+            if (i === 0) ctx.moveTo(getX(v), getY(v));
+            else ctx.lineTo(getX(v), getY(v));
+          }
+        });
         ctx.stroke();
       }
       // ARCOS
@@ -75,35 +72,35 @@ function DxfCanvas({ dxfRaw }) {
         ctx.beginPath();
         const sA = (360 - ent.endAngle) * Math.PI / 180;
         const eA = (360 - ent.startAngle) * Math.PI / 180;
-        ctx.arc(dX(ent.center.x + basePos.x), dY(ent.center.y + basePos.y), ent.radius * scale, sA, eA, false);
+        ctx.arc(dX(ent.center.x + (basePos.x || 0)), dY(ent.center.y + (basePos.y || 0)), (ent.radius || 0) * scale, sA, eA, false);
         ctx.stroke();
       }
-      // TEXTO (Ubicación real)
-      else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+      // TEXTO
+      else if ((ent.type === 'TEXT' || ent.type === 'MTEXT')) {
         const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
-        if (txt && txt !== "0") {
-          const fontSize = Math.max(10, (ent.height || 2.5) * scale);
-          ctx.fillStyle = "#e67e22";
+        const p = ent.start || ent.position;
+        if (txt && txt !== "0" && p) {
+          const fontSize = Math.max(10, (ent.height || 2) * scale);
+          ctx.fillStyle = "#d35400";
           ctx.font = `bold ${fontSize}px Arial`;
-          const p = ent.start || ent.position || { x: 0, y: 0 };
-          ctx.fillText(txt, x(p), y(p));
+          ctx.fillText(txt, getX(p), getY(p));
         }
       }
-      // INSERT (¡Crucial para tu archivo!)
-      else if (ent.type === 'INSERT' && dxfRaw.blocks && dxfRaw.blocks[ent.name]) {
+      // INSERT (Recursión segura)
+      else if (ent.type === 'INSERT' && dxfRaw.blocks && ent.name) {
         const block = dxfRaw.blocks[ent.name];
-        if (block.entities) {
-          block.entities.forEach(bEnt => drawEnt(bEnt, ent.position));
+        if (block && block.entities) {
+          block.entities.forEach(bEnt => drawEnt(bEnt, ent.position || {x:0, y:0}));
         }
       }
     };
 
-    // Dibujamos las entidades principales
-    if (dxfRaw.entities) dxfRaw.entities.forEach(ent => drawEnt(ent));
-
+    if (dxfRaw.entities) {
+      dxfRaw.entities.forEach(ent => drawEnt(ent));
+    }
   }, [dxfRaw, scale, offset]);
 
-  // 3. CONTROLES DE ZOOM Y PAN
+  // Handlers de zoom y pan...
   const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 400);
@@ -115,7 +112,7 @@ function DxfCanvas({ dxfRaw }) {
   };
 
   return (
-    <div style={{ border: '1px solid #000', background: '#fff', borderRadius: '4px' }}>
+    <div style={{ border: '2px solid #333', background: '#fff' }}>
       <canvas 
         ref={canvasRef} width={2400} height={1200} 
         onWheel={handleWheel}
@@ -126,7 +123,7 @@ function DxfCanvas({ dxfRaw }) {
           setLastMousePos({ x: e.clientX, y: e.clientY });
         }}
         onMouseUp={() => setIsDragging(false)}
-        style={{ width: '100%', height: '700px', cursor: isDragging ? 'grabbing' : 'grab' }} 
+        style={{ width: '100%', height: '700px', cursor: 'grab' }} 
       />
     </div>
   );
