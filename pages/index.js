@@ -14,16 +14,12 @@ function DxfCanvas({ dxfRaw }) {
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
-
-    // Límites específicos de tu archivo 700176.dxf
+    // Límites exactos de tu arnés detectados en el DXF
     const minX = 1413.27, maxX = 2047.99;
     const minY = 481.35, maxY = 777.74;
+    const width = maxX - minX, height = maxY - minY;
 
-    const width = maxX - minX;
-    const height = maxY - minY;
-
-    const initialScale = Math.min((canvas.width * 0.8) / width, (canvas.height * 0.8) / height);
-
+    const initialScale = Math.min((canvas.width * 0.85) / width, (canvas.height * 0.85) / height);
     setScale(initialScale);
     setOffset({
       x: (canvas.width / 2) - (minX + width / 2) * initialScale,
@@ -37,67 +33,67 @@ function DxfCanvas({ dxfRaw }) {
     ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
     const dX = (x) => x * scale + offset.x;
-    const dY = (y) => canvasRef.current.height - (y * scale + (canvasRef.current.height - offset.y));
+    const dY = (y) => canvasRef.current.height - (y * scale + (canvas.height - offset.y));
 
     const drawEnt = (ent, basePos = { x: 0, y: 0 }) => {
-      // --- PROTECCIÓN CRÍTICA: Validar que la entidad existe ---
       if (!ent) return;
-
-      const getX = (p) => p ? dX(p.x + (basePos.x || 0)) : 0;
-      const getY = (p) => p ? dY(p.y + (basePos.y || 0)) : 0;
+      const bX = basePos.x || 0;
+      const bY = basePos.y || 0;
 
       ctx.lineWidth = 1.2;
-      ctx.strokeStyle = "#2c3e50";
+      ctx.strokeStyle = "#1e272e"; // Color oscuro para las líneas
 
-      // LÍNEAS (Con validación de start y end)
+      // 1. LÍNEAS SIMPLES
       if (ent.type === 'LINE' && ent.start && ent.end) {
         ctx.beginPath();
-        ctx.moveTo(getX(ent.start), getY(ent.start));
-        ctx.lineTo(getX(ent.end), getY(ent.end));
+        ctx.moveTo(dX(ent.start.x + bX), dY(ent.start.y + bY));
+        ctx.lineTo(dX(ent.end.x + bX), dY(ent.end.y + bY));
         ctx.stroke();
       } 
-      // POLILÍNEAS
+      // 2. POLILÍNEAS (Aquí es donde suelen estar los cables largos)
       else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
         ctx.beginPath();
         ent.vertices.forEach((v, i) => {
-          if (v) {
-            if (i === 0) ctx.moveTo(getX(v), getY(v));
-            else ctx.lineTo(getX(v), getY(v));
-          }
+          if (i === 0) ctx.moveTo(dX(v.x + bX), dY(v.y + bY));
+          else ctx.lineTo(dX(v.x + bX), dY(v.y + bY));
         });
+        if (ent.shape) ctx.closePath(); // Por si es un área cerrada
         ctx.stroke();
       }
-      // ARCOS
+      // 3. ARCOS
       else if (ent.type === 'ARC' && ent.center) {
         ctx.beginPath();
         const sA = (360 - ent.endAngle) * Math.PI / 180;
         const eA = (360 - ent.startAngle) * Math.PI / 180;
-        ctx.arc(dX(ent.center.x + (basePos.x || 0)), dY(ent.center.y + (basePos.y || 0)), (ent.radius || 0) * scale, sA, eA, false);
+        ctx.arc(dX(ent.center.x + bX), dY(ent.center.y + bY), ent.radius * scale, sA, eA, false);
         ctx.stroke();
       }
-      // TEXTO
+      // 4. CÍRCULOS
+      else if (ent.type === 'CIRCLE' && ent.center) {
+        ctx.beginPath();
+        ctx.arc(dX(ent.center.x + bX), dY(ent.center.y + bY), ent.radius * scale, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+      // 5. TEXTO Y ETIQUETAS
       else if ((ent.type === 'TEXT' || ent.type === 'MTEXT')) {
         const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
         const p = ent.start || ent.position;
         if (txt && txt !== "0" && p) {
-          const fontSize = Math.max(10, (ent.height || 2) * scale);
-          ctx.fillStyle = "#d35400";
-          ctx.font = `bold ${fontSize}px Arial`;
-          ctx.fillText(txt, getX(p), getY(p));
+          ctx.fillStyle = "#d35400"; // Naranja para etiquetas
+          ctx.font = `bold ${Math.max(10, (ent.height || 3) * scale)}px Arial`;
+          ctx.fillText(txt, dX(p.x + bX), dY(p.y + bY));
         }
       }
-      // INSERT (Recursión segura)
+      // 6. BLOQUES (Recursividad para piezas ensambladas)
       else if (ent.type === 'INSERT' && dxfRaw.blocks && ent.name) {
         const block = dxfRaw.blocks[ent.name];
         if (block && block.entities) {
-          block.entities.forEach(bEnt => drawEnt(bEnt, ent.position || {x:0, y:0}));
+          block.entities.forEach(bEnt => drawEnt(bEnt, { x: bX + (ent.position?.x || 0), y: bY + (ent.position?.y || 0) }));
         }
       }
     };
 
-    if (dxfRaw.entities) {
-      dxfRaw.entities.forEach(ent => drawEnt(ent));
-    }
+    if (dxfRaw.entities) dxfRaw.entities.forEach(ent => drawEnt(ent));
   }, [dxfRaw, scale, offset]);
 
   // Handlers de zoom y pan...
@@ -111,11 +107,19 @@ function DxfCanvas({ dxfRaw }) {
     setScale(s => s * factor);
   };
 
-  return (
-    <div style={{ border: '2px solid #333', background: '#fff' }}>
+return (
+    <div style={{ border: '1px solid #333', borderRadius: '4px', overflow: 'hidden' }}>
       <canvas 
         ref={canvasRef} width={2400} height={1200} 
-        onWheel={handleWheel}
+        onWheel={(e) => {
+          e.preventDefault();
+          const factor = Math.pow(1.1, -e.deltaY / 400);
+          const rect = canvasRef.current.getBoundingClientRect();
+          const mX = e.clientX - rect.left;
+          const mY = e.clientY - rect.top;
+          setOffset(prev => ({ x: mX - (mX - prev.x) * factor, y: mY - (mY - prev.y) * factor }));
+          setScale(s => s * factor);
+        }}
         onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
         onMouseMove={(e) => {
           if (!isDragging) return;
@@ -123,7 +127,7 @@ function DxfCanvas({ dxfRaw }) {
           setLastMousePos({ x: e.clientX, y: e.clientY });
         }}
         onMouseUp={() => setIsDragging(false)}
-        style={{ width: '100%', height: '700px', cursor: 'grab' }} 
+        style={{ width: '100%', height: '700px', background: '#fff', cursor: 'grab' }} 
       />
     </div>
   );
