@@ -22,10 +22,12 @@ function DxfCanvas({ dxfRaw }) {
         if (ent.vertices) pts.push(...ent.vertices);
         if (ent.start && ent.end) pts.push(ent.start, ent.end);
         if (ent.position) pts.push(ent.position);
-        
+        if (ent.center) {
+          const r = ent.radius || 0;
+          pts.push({ x: ent.center.x - r, y: ent.center.y - r }, { x: ent.center.x + r, y: ent.center.y + r });
+        }
         pts.forEach(p => {
           if (p && typeof p.x === 'number' && typeof p.y === 'number') {
-            // Ignorar el 0,0 absoluto para que no aleje el zoom
             if (Math.abs(p.x) < 0.01 && Math.abs(p.y) < 0.01 && dxfRaw.entities.length > 20) return;
             minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
             maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
@@ -57,15 +59,13 @@ function DxfCanvas({ dxfRaw }) {
 
     dxfRaw.entities.forEach(ent => {
       try {
-        // --- CONFIGURACIÓN DE TRAZO FUERTE ---
-        ctx.lineWidth = 1.5; 
+        ctx.lineWidth = 1.2;
         ctx.lineCap = "round";
-        ctx.lineJoin = "round";
 
-        // 1. DIBUJAR LÍNEAS (Forzamos color negro para que sean visibles)
+        // 1. LÍNEAS Y POLILÍNEAS
         if (ent.type === 'LINE' || ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
           ctx.beginPath();
-          ctx.strokeStyle = "#000000"; // Negro sólido
+          ctx.strokeStyle = "#1e272e"; 
           if (ent.type === 'LINE' && ent.start && ent.end) {
             ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
             ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
@@ -78,29 +78,39 @@ function DxfCanvas({ dxfRaw }) {
           ctx.stroke();
         } 
         
-        // 2. DIBUJAR CÍRCULOS (Conectores)
+        // 2. ARCOS (Añadido)
+        else if (ent.type === 'ARC' && ent.center) {
+          ctx.beginPath();
+          ctx.strokeStyle = "#1e272e";
+          // Convertir grados a radianes e invertir eje Y para canvas
+          const startAngle = -ent.startAngle * Math.PI / 180;
+          const endAngle = -ent.endAngle * Math.PI / 180;
+          ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, startAngle, endAngle, true);
+          ctx.stroke();
+        }
+
+        // 3. CÍRCULOS
         else if (ent.type === 'CIRCLE' && ent.center) {
           ctx.beginPath();
-          ctx.strokeStyle = "#007bff"; // Azul brillante
+          ctx.strokeStyle = "#0984e3";
           ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
           ctx.stroke();
         }
 
-        // 3. DIBUJAR TEXTO (Con detección profunda de contenido)
+        // 4. TEXTO REFORZADO
         else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-          // Extraer el texto de cualquier propiedad posible
           const content = (ent.text || ent.string || ent.value || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
           
           if (content) {
-            // Si el height es muy pequeño o no existe, le damos uno por defecto (2.5 unidades CAD)
-            const textHeight = (ent.height && ent.height > 0) ? ent.height : 2.5;
-            const fontSize = textHeight * scale;
+            // Si no detecta altura, forzamos una visible (5 unidades de dibujo)
+            const h = (ent.height && ent.height > 0) ? ent.height : 5;
+            const fontSize = h * scale;
 
-            // Solo dibujar si es legible tras el zoom
-            if (fontSize > 1) {
-              ctx.fillStyle = "#ff5500"; // Naranja vibrante
-              ctx.font = `bold ${fontSize}px Arial, sans-serif`;
-              const p = ent.position || ent.start || { x: 0, y: 0 };
+            if (fontSize > 1.5) {
+              ctx.fillStyle = "#d35400"; // Naranja oscuro para contraste
+              ctx.font = `bold ${fontSize}px Arial`;
+              // Priorizamos 'start' para TEXT explotados
+              const p = ent.start || ent.position || { x: 0, y: 0 };
               ctx.fillText(content, dX(p.x), dY(p.y));
             }
           }
@@ -109,10 +119,9 @@ function DxfCanvas({ dxfRaw }) {
     });
   }, [dxfRaw, scale, offset]);
 
-  // Manejadores de eventos permanecen igual...
   const handleWheel = (e) => {
     e.preventDefault();
-    const factor = Math.pow(1.1, -e.deltaY / 250);
+    const factor = Math.pow(1.1, -e.deltaY / 300);
     const rect = canvasRef.current.getBoundingClientRect();
     const mX = e.clientX - rect.left;
     const mY = e.clientY - rect.top;
@@ -121,7 +130,7 @@ function DxfCanvas({ dxfRaw }) {
   };
 
   return (
-    <div style={{ border: '2px solid #333', borderRadius: '8px', overflow: 'hidden', background: '#f8f9fa' }}>
+    <div style={{ border: '2px solid #2d3436', borderRadius: '8px', overflow: 'hidden', background: '#ffffff' }}>
       <canvas 
         ref={canvasRef} width={2000} height={1000} 
         onWheel={handleWheel}
@@ -133,7 +142,7 @@ function DxfCanvas({ dxfRaw }) {
         }}
         onMouseUp={() => setIsDragging(false)}
         onMouseLeave={() => setIsDragging(false)}
-        style={{ width: '100%', height: '700px', cursor: isDragging ? 'grabbing' : 'grab', background: '#ffffff' }} 
+        style={{ width: '100%', height: '700px', cursor: isDragging ? 'grabbing' : 'grab' }} 
       />
     </div>
   );
