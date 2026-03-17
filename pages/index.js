@@ -11,85 +11,113 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  // 1. AUTO-ZOOM DINÁMICO (Ahora más preciso sin bloques que estorben)
+  // 1. AUTO-ZOOM INTELIGENTE: Calcula los límites reales del arnés
   useEffect(() => {
     if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
     const canvas = canvasRef.current;
+    
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
+    // Recorremos las entidades para encontrar el cuadro delimitador (Bounding Box)
     dxfRaw.entities.forEach(ent => {
-      const check = (p) => {
+      const checkPoint = (p) => {
         if (p && typeof p.x === 'number') {
-          // Filtro para ignorar basura residual en el origen 0,0
-          if (Math.abs(p.x) < 0.1 && Math.abs(p.y) < 0.1) return;
+          // FILTRO CRÍTICO: Ignoramos puntos en el origen 0,0 
+          // que AutoCAD suele dejar y que hacen que el dibujo se vea pequeño.
+          if (Math.abs(p.x) < 1 && Math.abs(p.y) < 1) return;
+          
           minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
           maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
         }
       };
-      if (ent.vertices) ent.vertices.forEach(check);
-      if (ent.start) { check(ent.start); check(ent.end); }
-      if (ent.center) check(ent.center);
-      if (ent.position) check(ent.position);
+
+      if (ent.vertices) ent.vertices.forEach(checkPoint);
+      if (ent.start) { checkPoint(ent.start); checkPoint(ent.end); }
+      if (ent.center) checkPoint(ent.center);
+      if (ent.position) checkPoint(ent.position);
     });
 
+    // Si no se encontró geometría válida fuera del origen
     if (minX === Infinity) return;
-    const width = maxX - minX;
-    const height = maxY - minY;
 
-    const initialScale = Math.min((canvas.width - 120) / (width || 1), (canvas.height - 120) / (height || 1));
+    const drawingWidth = maxX - minX;
+    const drawingHeight = maxY - minY;
+
+    // Calculamos la escala para que el dibujo ocupe el 90% del canvas (padding de 50px)
+    const padding = 60;
+    const availableWidth = canvas.width - (padding * 2);
+    const availableHeight = canvas.height - (padding * 2);
+
+    const initialScale = Math.min(
+      availableWidth / (drawingWidth || 1), 
+      availableHeight / (drawingHeight || 1)
+    );
+
     setScale(initialScale);
+
+    // Centramos el dibujo en el canvas
     setOffset({
-      x: (canvas.width / 2) - (minX + width / 2) * initialScale,
-      y: (canvas.height / 2) + (minY + height / 2) * initialScale
+      x: (canvas.width / 2) - (minX + drawingWidth / 2) * initialScale,
+      y: (canvas.height / 2) + (minY + drawingHeight / 2) * initialScale
     });
   }, [dxfRaw]);
 
-  // 2. RENDERIZADO SIMPLIFICADO (Modo "High Performance")
+  // 2. RENDERIZADO: Dibuja las entidades en el Canvas
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
-    const ctx = canvasRef.current.getContext("2d");
-    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    
+    // Limpiamos el canvas antes de redibujar
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // Funciones de conversión de coordenadas CAD -> Pantalla
     const dX = (x) => x * scale + offset.x;
-    const dY = (y) => canvasRef.current.height - (y * scale + (canvasRef.current.height - offset.y));
+    const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
     dxfRaw.entities.forEach(ent => {
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = "#2c3e50";
+      try {
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = "#2c3e50"; // Color azul oscuro para cables
 
-      // Dibujo de Líneas y Polilíneas
-      if (ent.type === 'LINE' && ent.start && ent.end) {
-        ctx.beginPath();
-        ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
-        ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
-        ctx.stroke();
-      } else if (ent.vertices && ent.vertices.length > 1) {
-        ctx.beginPath();
-        ent.vertices.forEach((v, i) => {
-          if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
-          else ctx.lineTo(dX(v.x), dY(v.y));
-        });
-        ctx.stroke();
-      }
-      // Dibujo de Arcos y Círculos (Conectores)
-      else if ((ent.type === 'ARC' || ent.type === 'CIRCLE') && ent.center) {
-        ctx.beginPath();
-        const sA = ent.type === 'ARC' ? (360 - ent.endAngle) * Math.PI / 180 : 0;
-        const eA = ent.type === 'ARC' ? (360 - ent.startAngle) * Math.PI / 180 : 2 * Math.PI;
-        ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, sA, eA, false);
-        ctx.stroke();
-      }
-      // Dibujo de Texto (Nombres de conectores/cables)
-      else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-        const p = ent.start || ent.position;
-        if (p) {
-          const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
-          if (txt && txt !== "0") {
-            ctx.fillStyle = "#e67e22";
-            ctx.font = `bold ${Math.max(11, (ent.height || 2.5) * scale)}px Arial`;
-            ctx.fillText(txt, dX(p.x), dY(p.y));
+        // --- LÍNEAS Y POLILÍNEAS ---
+        if (ent.type === 'LINE' && ent.start && ent.end) {
+          ctx.beginPath();
+          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
+          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+          ctx.stroke();
+        } 
+        else if (ent.vertices && ent.vertices.length > 1) {
+          ctx.beginPath();
+          ent.vertices.forEach((v, i) => {
+            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
+            else ctx.lineTo(dX(v.x), dY(v.y));
+          });
+          ctx.stroke();
+        }
+        // --- ARCOS Y CÍRCULOS (Conectores) ---
+        else if ((ent.type === 'ARC' || ent.type === 'CIRCLE') && ent.center) {
+          ctx.beginPath();
+          const sA = ent.type === 'ARC' ? (360 - ent.endAngle) * Math.PI / 180 : 0;
+          const eA = ent.type === 'ARC' ? (360 - ent.startAngle) * Math.PI / 180 : 2 * Math.PI;
+          ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 0) * scale, sA, eA, false);
+          ctx.stroke();
+        }
+        // --- TEXTO (Etiquetas de conectores) ---
+        else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+          const p = ent.start || ent.position;
+          if (p && (Math.abs(p.x) > 1 || Math.abs(p.y) > 1)) {
+            const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
+            if (txt && txt !== "0") {
+              const fontSize = Math.max(12, (ent.height || 3) * scale);
+              ctx.fillStyle = "#d35400"; // Color naranja para resaltar texto
+              ctx.font = `bold ${fontSize}px Arial`;
+              ctx.fillText(txt, dX(p.x), dY(p.y));
+            }
           }
         }
+      } catch (err) {
+        // Silenciamos errores de entidades individuales para no romper el visor
       }
     });
   }, [dxfRaw, scale, offset]);
