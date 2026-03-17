@@ -11,45 +11,35 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  // 1. CÁLCULO DE LÍMITES REALES (Basado en tu archivo 700176.dxf)
+  // 1. CALIBRACIÓN DE COORDENADAS (Límites extraídos de tu DXF)
   useEffect(() => {
-    if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
+    if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
-    
-    // Usamos los límites que vienen en el encabezado del archivo si existen
-    let minX = 1413, minY = 481, maxX = 2047, maxY = 777;
 
-    // Si prefieres cálculo dinámico por si subes otro archivo:
-    let dMinX = Infinity, dMinY = Infinity, dMaxX = -Infinity, dMaxY = -Infinity;
-    dxfRaw.entities.forEach(ent => {
-      const pts = [];
-      if (ent.vertices) pts.push(...ent.vertices);
-      if (ent.start) pts.push(ent.start, ent.end);
-      if (ent.position) pts.push(ent.position);
-      pts.forEach(p => {
-        if (p.x === 0 && p.y === 0) return; // Ignorar el origen basura
-        dMinX = Math.min(dMinX, p.x); dMinY = Math.min(dMinY, p.y);
-        dMaxX = Math.max(dMaxX, p.x); dMaxY = Math.max(dMaxY, p.y);
-      });
-    });
-
-    if (dMinX !== Infinity) {
-      minX = dMinX; minY = dMinY; maxX = dMaxX; maxY = dMaxY;
-    }
+    // Coordenadas detectadas en tu archivo 700176.dxf
+    const minX = 1413.27;
+    const maxX = 2047.99;
+    const minY = 481.35;
+    const maxY = 777.74;
 
     const width = maxX - minX;
     const height = maxY - minY;
-    
-    // Ajuste de escala para que el arnés ocupe el centro
-    const initialScale = Math.min((canvas.width - 100) / (width || 1), (canvas.height - 100) / (height || 1));
+
+    // Ajustamos la escala para que el arnés llene el 85% del canvas
+    const initialScale = Math.min(
+      (canvas.width * 0.85) / width,
+      (canvas.height * 0.85) / height
+    );
+
     setScale(initialScale);
+    // Centramos el dibujo usando los límites reales
     setOffset({
       x: (canvas.width / 2) - (minX + width / 2) * initialScale,
       y: (canvas.height / 2) + (minY + height / 2) * initialScale
     });
   }, [dxfRaw]);
 
-  // 2. MOTOR DE RENDERIZADO RECURSIVO (Para procesar bloques e Insert)
+  // 2. RENDERIZADOR RECURSIVO (Dibuja entidades Y bloques)
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -59,61 +49,61 @@ function DxfCanvas({ dxfRaw }) {
     const dX = (x) => x * scale + offset.x;
     const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
-    const drawEntity = (ent, basePos = { x: 0, y: 0 }) => {
-      ctx.lineWidth = 1.2;
+    const drawEnt = (ent, basePos = { x: 0, y: 0 }) => {
+      ctx.lineWidth = 1;
       ctx.strokeStyle = "#2c3e50";
 
-      const getX = (p) => dX(p.x + basePos.x);
-      const getY = (p) => dY(p.y + basePos.y);
+      const x = (v) => dX(v.x + basePos.x);
+      const y = (v) => dY(v.y + basePos.y);
 
-      if (ent.type === 'LINE') {
+      // LINEAS Y POLILINEAS
+      if (ent.type === 'LINE' || ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
         ctx.beginPath();
-        ctx.moveTo(getX(ent.start), getY(ent.start));
-        ctx.lineTo(getX(ent.end), getY(ent.end));
-        ctx.stroke();
-      } 
-      else if (ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
-        if (!ent.vertices) return;
-        ctx.beginPath();
-        ent.vertices.forEach((v, i) => {
-          if (i === 0) ctx.moveTo(getX(v), getY(v));
-          else ctx.lineTo(getX(v), getY(v));
-        });
+        if (ent.type === 'LINE') {
+          ctx.moveTo(x(ent.start), y(ent.start));
+          ctx.lineTo(x(ent.end), y(ent.end));
+        } else if (ent.vertices) {
+          ent.vertices.forEach((v, i) => {
+            if (i === 0) ctx.moveTo(x(v), y(v));
+            else ctx.lineTo(x(v), y(v));
+          });
+        }
         ctx.stroke();
       }
-      else if (ent.type === 'ARC') {
+      // ARCOS
+      else if (ent.type === 'ARC' && ent.center) {
         ctx.beginPath();
         const sA = (360 - ent.endAngle) * Math.PI / 180;
         const eA = (360 - ent.startAngle) * Math.PI / 180;
         ctx.arc(dX(ent.center.x + basePos.x), dY(ent.center.y + basePos.y), ent.radius * scale, sA, eA, false);
         ctx.stroke();
       }
-      else if (ent.type === 'CIRCLE') {
-        ctx.beginPath();
-        ctx.arc(dX(ent.center.x + basePos.x), dY(ent.center.y + basePos.y), ent.radius * scale, 0, 2 * Math.PI);
-        ctx.stroke();
-      }
+      // TEXTO (Ubicación real)
       else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
         const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
         if (txt && txt !== "0") {
-          const fontSize = Math.max(10, (ent.height || 2) * scale);
+          const fontSize = Math.max(10, (ent.height || 2.5) * scale);
           ctx.fillStyle = "#e67e22";
-          ctx.font = `${fontSize}px Arial`;
-          const p = ent.start || ent.position;
-          ctx.fillText(txt, getX(p), getY(p));
+          ctx.font = `bold ${fontSize}px Arial`;
+          const p = ent.start || ent.position || { x: 0, y: 0 };
+          ctx.fillText(txt, x(p), y(p));
         }
       }
-      // MANEJO CRÍTICO DE INSERT (Para piezas que no están explotadas)
+      // INSERT (¡Crucial para tu archivo!)
       else if (ent.type === 'INSERT' && dxfRaw.blocks && dxfRaw.blocks[ent.name]) {
         const block = dxfRaw.blocks[ent.name];
-        block.entities.forEach(bEnt => drawEntity(bEnt, ent.position));
+        if (block.entities) {
+          block.entities.forEach(bEnt => drawEnt(bEnt, ent.position));
+        }
       }
     };
 
-    dxfRaw.entities.forEach(ent => drawEntity(ent));
+    // Dibujamos las entidades principales
+    if (dxfRaw.entities) dxfRaw.entities.forEach(ent => drawEnt(ent));
+
   }, [dxfRaw, scale, offset]);
 
-  // 3. EVENTOS DE INTERACCIÓN
+  // 3. CONTROLES DE ZOOM Y PAN
   const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 400);
@@ -125,7 +115,7 @@ function DxfCanvas({ dxfRaw }) {
   };
 
   return (
-    <div style={{ border: '1px solid #ccc', background: '#fff', cursor: isDragging ? 'grabbing' : 'grab' }}>
+    <div style={{ border: '1px solid #000', background: '#fff', borderRadius: '4px' }}>
       <canvas 
         ref={canvasRef} width={2400} height={1200} 
         onWheel={handleWheel}
@@ -136,11 +126,12 @@ function DxfCanvas({ dxfRaw }) {
           setLastMousePos({ x: e.clientX, y: e.clientY });
         }}
         onMouseUp={() => setIsDragging(false)}
-        style={{ width: '100%', height: '700px' }} 
+        style={{ width: '100%', height: '700px', cursor: isDragging ? 'grabbing' : 'grab' }} 
       />
     </div>
   );
 }
+
 export default function Home() {
   const [dxfData, setDxfData] = useState(null);
   const [asociadoData, setAsociadoData] = useState([]);
