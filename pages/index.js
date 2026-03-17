@@ -16,11 +16,12 @@ function DxfCanvas({ dxfRaw }) {
     const canvas = canvasRef.current;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
-    // 1. Cálculo de límites (Ignoramos el 0,0)
+    // 1. Cálculo de límites (Volvemos a la lógica que sí funcionaba para centrar)
     dxfRaw.entities.forEach(ent => {
       const check = (p) => {
         if (p && typeof p.x === 'number') {
-          if (Math.abs(p.x) < 0.1 && Math.abs(p.y) < 0.1) return;
+          // Solo ignoramos el 0,0 absoluto si el dibujo es grande
+          if (Math.abs(p.x) < 0.001 && Math.abs(p.y) < 0.001 && dxfRaw.entities.length > 100) return;
           minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
           maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
         }
@@ -28,14 +29,14 @@ function DxfCanvas({ dxfRaw }) {
       if (ent.vertices) ent.vertices.forEach(check);
       if (ent.start) { check(ent.start); check(ent.end); }
       if (ent.position) check(ent.position);
+      if (ent.center) check(ent.center);
     });
 
     if (minX === Infinity) return;
     const width = maxX - minX;
     const height = maxY - minY;
     
-    // Zoom generoso para que el arnés se vea grande
-    const initialScale = Math.min((canvas.width - 150) / (width || 1), (canvas.height - 150) / (height || 1));
+    const initialScale = Math.min((canvas.width - 200) / (width || 1), (canvas.height - 200) / (height || 1));
     setScale(initialScale);
     setOffset({
       x: (canvas.width / 2) - (minX + width / 2) * initialScale,
@@ -52,69 +53,69 @@ function DxfCanvas({ dxfRaw }) {
     const dX = (x) => x * scale + offset.x;
     const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
-    // 2. Renderizado Directo (Sin buscar bloques)
-    dxfRaw.entities.forEach(ent => {
-      try {
-        ctx.lineWidth = 1.2;
-        ctx.strokeStyle = "#2c3e50";
+    // Función de dibujo unificada
+    const drawEnt = (ent) => {
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "#1e272e";
 
-        // LINEAS Y POLILINEAS
-        if (ent.type === 'LINE' || ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
-          ctx.beginPath();
-          if (ent.type === 'LINE') {
-            ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
-            ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
-          } else if (ent.vertices) {
-            ent.vertices.forEach((v, i) => {
-              if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
-              else ctx.lineTo(dX(v.x), dY(v.y));
-            });
-          }
-          ctx.stroke();
-        } 
-        
-        // ARCOS (Ajuste de dirección corregido)
-        else if (ent.type === 'ARC' && ent.center) {
-          ctx.beginPath();
-          const sA = (360 - ent.endAngle) * Math.PI / 180;
-          const eA = (360 - ent.startAngle) * Math.PI / 180;
-          ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, sA, eA, false);
-          ctx.stroke();
+      // LINEAS (Restauradas sin filtros de distancia)
+      if (ent.type === 'LINE' || ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
+        ctx.beginPath();
+        if (ent.type === 'LINE' && ent.start && ent.end) {
+          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
+          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+        } else if (ent.vertices && ent.vertices.length > 0) {
+          ent.vertices.forEach((v, i) => {
+            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
+            else ctx.lineTo(dX(v.x), dY(v.y));
+          });
         }
+        ctx.stroke();
+      } 
+      // ARCOS (Ajuste fino de visualización)
+      else if (ent.type === 'ARC' && ent.center) {
+        ctx.beginPath();
+        const sA = (360 - ent.endAngle) * Math.PI / 180;
+        const eA = (360 - ent.startAngle) * Math.PI / 180;
+        ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, sA, eA, false);
+        ctx.stroke();
+      }
+      // CÍRCULOS
+      else if (ent.type === 'CIRCLE' && ent.center) {
+        ctx.beginPath();
+        ctx.strokeStyle = "#0984e3";
+        ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+      // TEXTO (Mejorado para encontrar posición real)
+      else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+        const txt = (ent.text || ent.string || ent.value || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
+        if (txt && txt !== "0") {
+          const fontSize = Math.max(12, (ent.height || 5) * scale);
+          ctx.fillStyle = "#d35400";
+          ctx.font = `bold ${fontSize}px Arial`;
+          // Buscamos coordenadas válidas fuera del 0,0
+          const p = [ent.start, ent.position, ent.center].find(pt => pt && (Math.abs(pt.x) > 0.01 || Math.abs(pt.y) > 0.01)) || {x:0, y:0};
+          ctx.fillText(txt, dX(p.x), dY(p.y));
+        }
+      }
+    };
 
-        // TEXTO (Forzar posición tras el Explode)
-        else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-          const content = (ent.text || ent.string || ent.value || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
-          if (content && content !== "0") {
-            const h = ent.height || 4;
-            const fontSize = Math.max(12, h * scale); // Mínimo 12px para leerlo
-            ctx.fillStyle = "#e67e22";
-            ctx.font = `bold ${fontSize}px Arial`;
-            
-            // Si el texto se amontona en el centro, es porque su posición es 0,0. 
-            // Buscamos cualquier otra coordenada que tenga la entidad.
-            const p = ent.start || ent.position || ent.center;
-            if (p && (Math.abs(p.x) > 0.1 || Math.abs(p.y) > 0.1)) {
-              ctx.fillText(content, dX(p.x), dY(p.y));
-            }
-          }
-        }
+    // Dibujamos entidades y protegemos contra el error de bloques
+    dxfRaw.entities.forEach(drawEnt);
+    
+    if (dxfRaw.blocks) {
+      Object.values(dxfRaw.blocks).forEach(block => {
+        if (block.entities) block.entities.forEach(drawEnt);
+      });
+    }
 
-        // CIRCULOS
-        else if (ent.type === 'CIRCLE' && ent.center) {
-          ctx.beginPath();
-          ctx.strokeStyle = "#3498db";
-          ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
-          ctx.stroke();
-        }
-      } catch (err) {}
-    });
   }, [dxfRaw, scale, offset]);
 
-  // Handlers de zoom/pan se mantienen...
+  // Handlers de Zoom y Pan (Sin cambios)
   const handleWheel = (e) => {
     e.preventDefault();
-    const factor = Math.pow(1.1, -e.deltaY / 400);
+    const factor = Math.pow(1.1, -e.deltaY / 500);
     const rect = canvasRef.current.getBoundingClientRect();
     const mX = e.clientX - rect.left;
     const mY = e.clientY - rect.top;
@@ -123,7 +124,7 @@ function DxfCanvas({ dxfRaw }) {
   };
 
   return (
-    <div style={{ border: '2px solid #000', background: '#fff' }}>
+    <div style={{ border: '2px solid #000', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
       <canvas 
         ref={canvasRef} width={2400} height={1200} 
         onWheel={handleWheel}
@@ -134,7 +135,7 @@ function DxfCanvas({ dxfRaw }) {
           setLastMousePos({ x: e.clientX, y: e.clientY });
         }}
         onMouseUp={() => setIsDragging(false)}
-        style={{ width: '100%', height: '700px', cursor: 'grab' }} 
+        style={{ width: '100%', height: '750px', cursor: 'grab' }} 
       />
     </div>
   );
