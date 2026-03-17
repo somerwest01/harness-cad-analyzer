@@ -14,12 +14,13 @@ function DxfCanvas({ dxfRaw }) {
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
-    // Límites exactos de tu arnés detectados en el DXF
+    
+    // Límites específicos de tu archivo 700176.dxf
     const minX = 1413.27, maxX = 2047.99;
     const minY = 481.35, maxY = 777.74;
     const width = maxX - minX, height = maxY - minY;
 
-    const initialScale = Math.min((canvas.width * 0.85) / width, (canvas.height * 0.85) / height);
+    const initialScale = Math.min((canvas.width * 0.85) / (width || 1), (canvas.height * 0.85) / (height || 1));
     setScale(initialScale);
     setOffset({
       x: (canvas.width / 2) - (minX + width / 2) * initialScale,
@@ -32,64 +33,65 @@ function DxfCanvas({ dxfRaw }) {
     const ctx = canvasRef.current.getContext("2d");
     ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
-    const dX = (x) => x * scale + offset.x;
-    const dY = (y) => canvasRef.current.height - (y * scale + (canvas.height - offset.y));
+    const dX = (x) => (x || 0) * scale + offset.x;
+    const dY = (y) => canvasRef.current.height - ((y || 0) * scale + (canvasRef.current.height - offset.y));
 
-    const drawEnt = (ent, basePos = { x: 0, y: 0 }) => {
+    const drawEnt = (ent, bX = 0, bY = 0) => {
       if (!ent) return;
-      const bX = basePos.x || 0;
-      const bY = basePos.y || 0;
 
       ctx.lineWidth = 1.2;
-      ctx.strokeStyle = "#1e272e"; // Color oscuro para las líneas
+      ctx.strokeStyle = "#1e272e";
 
-      // 1. LÍNEAS SIMPLES
-      if (ent.type === 'LINE' && ent.start && ent.end) {
-        ctx.beginPath();
-        ctx.moveTo(dX(ent.start.x + bX), dY(ent.start.y + bY));
-        ctx.lineTo(dX(ent.end.x + bX), dY(ent.end.y + bY));
-        ctx.stroke();
-      } 
-      // 2. POLILÍNEAS (Aquí es donde suelen estar los cables largos)
-      else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
-        ctx.beginPath();
-        ent.vertices.forEach((v, i) => {
-          if (i === 0) ctx.moveTo(dX(v.x + bX), dY(v.y + bY));
-          else ctx.lineTo(dX(v.x + bX), dY(v.y + bY));
-        });
-        if (ent.shape) ctx.closePath(); // Por si es un área cerrada
-        ctx.stroke();
-      }
-      // 3. ARCOS
-      else if (ent.type === 'ARC' && ent.center) {
-        ctx.beginPath();
-        const sA = (360 - ent.endAngle) * Math.PI / 180;
-        const eA = (360 - ent.startAngle) * Math.PI / 180;
-        ctx.arc(dX(ent.center.x + bX), dY(ent.center.y + bY), ent.radius * scale, sA, eA, false);
-        ctx.stroke();
-      }
-      // 4. CÍRCULOS
-      else if (ent.type === 'CIRCLE' && ent.center) {
-        ctx.beginPath();
-        ctx.arc(dX(ent.center.x + bX), dY(ent.center.y + bY), ent.radius * scale, 0, 2 * Math.PI);
-        ctx.stroke();
-      }
-      // 5. TEXTO Y ETIQUETAS
-      else if ((ent.type === 'TEXT' || ent.type === 'MTEXT')) {
-        const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
-        const p = ent.start || ent.position;
-        if (txt && txt !== "0" && p) {
-          ctx.fillStyle = "#d35400"; // Naranja para etiquetas
-          ctx.font = `bold ${Math.max(10, (ent.height || 3) * scale)}px Arial`;
-          ctx.fillText(txt, dX(p.x + bX), dY(p.y + bY));
+      try {
+        // 1. LÍNEAS
+        if (ent.type === 'LINE' && ent.start && ent.end) {
+          ctx.beginPath();
+          ctx.moveTo(dX(ent.start.x + bX), dY(ent.start.y + bY));
+          ctx.lineTo(dX(ent.end.x + bX), dY(ent.end.y + bY));
+          ctx.stroke();
+        } 
+        // 2. POLILÍNEAS (Protección extra en el loop de vértices)
+        else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
+          ctx.beginPath();
+          ent.vertices.forEach((v, i) => {
+            if (v && typeof v.x === 'number') { // <--- Validación de seguridad
+              if (i === 0) ctx.moveTo(dX(v.x + bX), dY(v.y + bY));
+              else ctx.lineTo(dX(v.x + bX), dY(v.y + bY));
+            }
+          });
+          ctx.stroke();
         }
-      }
-      // 6. BLOQUES (Recursividad para piezas ensambladas)
-      else if (ent.type === 'INSERT' && dxfRaw.blocks && ent.name) {
-        const block = dxfRaw.blocks[ent.name];
-        if (block && block.entities) {
-          block.entities.forEach(bEnt => drawEnt(bEnt, { x: bX + (ent.position?.x || 0), y: bY + (ent.position?.y || 0) }));
+        // 3. ARCOS Y CÍRCULOS
+        else if ((ent.type === 'ARC' || ent.type === 'CIRCLE') && ent.center) {
+          ctx.beginPath();
+          const sA = ent.type === 'ARC' ? (360 - ent.endAngle) * Math.PI / 180 : 0;
+          const eA = ent.type === 'ARC' ? (360 - ent.startAngle) * Math.PI / 180 : 2 * Math.PI;
+          ctx.arc(dX(ent.center.x + bX), dY(ent.center.y + bY), (ent.radius || 0) * scale, sA, eA, false);
+          ctx.stroke();
         }
+        // 4. TEXTO (Protección para posición indefinida)
+        else if ((ent.type === 'TEXT' || ent.type === 'MTEXT')) {
+          const p = ent.start || ent.position;
+          if (p && typeof p.x === 'number') {
+            const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
+            if (txt && txt !== "0") {
+              ctx.fillStyle = "#d35400";
+              ctx.font = `bold ${Math.max(10, (ent.height || 3) * scale)}px Arial`;
+              ctx.fillText(txt, dX(p.x + bX), dY(p.y + bY));
+            }
+          }
+        }
+        // 5. BLOQUES (Recursividad con protección de posición)
+        else if (ent.type === 'INSERT' && dxfRaw.blocks && ent.name) {
+          const block = dxfRaw.blocks[ent.name];
+          if (block && block.entities) {
+            const insX = bX + (ent.position?.x || 0);
+            const insY = bY + (ent.position?.y || 0);
+            block.entities.forEach(bEnt => drawEnt(bEnt, insX, insY));
+          }
+        }
+      } catch (e) {
+        console.warn("Error dibujando entidad:", ent.type, e);
       }
     };
 
@@ -108,15 +110,14 @@ function DxfCanvas({ dxfRaw }) {
   };
 
 return (
-    <div style={{ border: '1px solid #333', borderRadius: '4px', overflow: 'hidden' }}>
+    <div style={{ border: '1px solid #333', borderRadius: '4px', overflow: 'hidden', background: '#fff' }}>
       <canvas 
         ref={canvasRef} width={2400} height={1200} 
         onWheel={(e) => {
           e.preventDefault();
           const factor = Math.pow(1.1, -e.deltaY / 400);
           const rect = canvasRef.current.getBoundingClientRect();
-          const mX = e.clientX - rect.left;
-          const mY = e.clientY - rect.top;
+          const mX = e.clientX - rect.left; const mY = e.clientY - rect.top;
           setOffset(prev => ({ x: mX - (mX - prev.x) * factor, y: mY - (mY - prev.y) * factor }));
           setScale(s => s * factor);
         }}
@@ -127,7 +128,7 @@ return (
           setLastMousePos({ x: e.clientX, y: e.clientY });
         }}
         onMouseUp={() => setIsDragging(false)}
-        style={{ width: '100%', height: '700px', background: '#fff', cursor: 'grab' }} 
+        style={{ width: '100%', height: '700px', cursor: 'grab' }} 
       />
     </div>
   );
