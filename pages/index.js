@@ -116,27 +116,37 @@ function DxfCanvas({ dxfRaw }) {
   }, [dxfRaw, scale, offset]);
 
   // Handlers de Mouse (Zoom y Pan)
-  const handleWheel = (e) => {
+const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 400);
     const rect = canvasRef.current.getBoundingClientRect();
-    const mX = e.clientX - rect.left; const mY = e.clientY - rect.top;
+    const mX = e.clientX - rect.left;
+    const mY = e.clientY - rect.top;
     setOffset(prev => ({ x: mX - (mX - prev.x) * factor, y: mY - (mY - prev.y) * factor }));
     setScale(s => s * factor);
   };
 
+  const handleMouseDown = (e) => {
+    setIsDragging(true);
+    setLastMousePos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isDragging) return;
+    setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
+    setLastMousePos({ x: e.clientX, y: e.clientY });
+  };
+  
+
   return (
-    <div style={{ border: '2px solid #222', borderRadius: '8px', background: '#fff' }}>
+    <div style={{background: '#fff', border: '1px solid #ccc', borderRadius: '8px'}}>
       <canvas 
         ref={canvasRef} width={2400} height={1200} 
         onWheel={handleWheel}
-        onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
-        onMouseMove={(e) => {
-          if (!isDragging) return;
-          setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
-          setLastMousePos({ x: e.clientX, y: e.clientY });
-        }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
         onMouseUp={() => setIsDragging(false)}
+        onMouseLeave={() => setIsDragging(false)}
         style={{ width: '100%', height: '750px', cursor: isDragging ? 'grabbing' : 'grab' }} 
       />
     </div>
