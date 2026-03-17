@@ -11,38 +11,32 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  // 1. AUTO-ZOOM Y CENTRADO
+  // 1. ZOOM Y LÍMITES
   useEffect(() => {
     if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
     const canvas = canvasRef.current;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
-    dxfRaw.entities.forEach(ent => {
-      try {
-        const pts = [];
-        if (ent.vertices) pts.push(...ent.vertices);
-        if (ent.start && ent.end) {
-          const dist = Math.hypot(ent.end.x - ent.start.x, ent.end.y - ent.start.y);
-          if (dist > 1) pts.push(ent.start, ent.end); // Solo líneas reales
-        }
-        if (ent.position) pts.push(ent.position);
-        if (ent.center) pts.push(ent.center);
+    const checkPoint = (p) => {
+      if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+        if (Math.abs(p.x) < 0.1 && Math.abs(p.y) < 0.1) return;
+        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+      }
+    };
 
-        pts.forEach(p => {
-          if (p && typeof p.x === 'number' && typeof p.y === 'number') {
-            if (Math.abs(p.x) < 0.1 && Math.abs(p.y) < 0.1) return;
-            minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-            maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-          }
-        });
-      } catch (e) {}
+    dxfRaw.entities.forEach(ent => {
+      if (ent.vertices) ent.vertices.forEach(checkPoint);
+      if (ent.start) { checkPoint(ent.start); checkPoint(ent.end); }
+      if (ent.position) checkPoint(ent.position);
+      if (ent.center) checkPoint(ent.center);
     });
 
-    if (minX === Infinity) return;
     const width = maxX - minX;
     const height = maxY - minY;
+    if (minX === Infinity) return;
+
     const initialScale = Math.min((canvas.width - 200) / (width || 1), (canvas.height - 200) / (height || 1));
-    
     setScale(initialScale);
     setOffset({
       x: (canvas.width / 2) - (minX + width / 2) * initialScale,
@@ -50,7 +44,7 @@ function DxfCanvas({ dxfRaw }) {
     });
   }, [dxfRaw]);
 
-  // 2. MOTOR DE RENDERIZADO REFORZADO
+  // 2. RENDERIZADO (Con fix de Arcos y Bloques)
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -60,85 +54,73 @@ function DxfCanvas({ dxfRaw }) {
     const dX = (x) => x * scale + offset.x;
     const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
-    // Función para dibujar entidades (se usa para entidades sueltas y bloques)
-    const drawEntity = (ent) => {
+    const drawEnt = (ent, basePos = { x: 0, y: 0 }) => {
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = "#1e272e";
+      const x = (p) => dX(p.x + basePos.x);
+      const y = (p) => dY(p.y + basePos.y);
 
+      // LINEAS
       if (ent.type === 'LINE' || ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
         ctx.beginPath();
         if (ent.type === 'LINE') {
-          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
-          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+          ctx.moveTo(x(ent.start), y(ent.start));
+          ctx.lineTo(x(ent.end), y(ent.end));
         } else if (ent.vertices) {
           ent.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
-            else ctx.lineTo(dX(v.x), dY(v.y));
+            if (i === 0) ctx.moveTo(x(v), y(v));
+            else ctx.lineTo(x(v), y(v));
           });
         }
         ctx.stroke();
-      } 
+      }
+      // ARCOS (Fix: Ángulos corregidos para sentido horario/antihorario)
       else if (ent.type === 'ARC' && ent.center) {
         ctx.beginPath();
-        // Corrección de Arcos: Invertimos los ángulos para el sistema Canvas
-        const sA = (2 * Math.PI) - (ent.startAngle * Math.PI / 180);
-        const eA = (2 * Math.PI) - (ent.endAngle * Math.PI / 180);
-        // Usamos 'true' para forzar el sentido anti-horario de AutoCAD
-        ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, sA, eA, true);
+        const sA = (360 - ent.endAngle) * Math.PI / 180;
+        const eA = (360 - ent.startAngle) * Math.PI / 180;
+        ctx.arc(dX(ent.center.x + basePos.x), dY(ent.center.y + basePos.y), ent.radius * scale, sA, eA, false);
         ctx.stroke();
       }
+      // CIRCULOS
       else if (ent.type === 'CIRCLE' && ent.center) {
         ctx.beginPath();
         ctx.strokeStyle = "#0984e3";
-        ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
+        ctx.arc(dX(ent.center.x + basePos.x), dY(ent.center.y + basePos.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
         ctx.stroke();
       }
+      // TEXTO (Fix: Prioridad de renderizado)
       else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
         const txt = (ent.text || ent.string || ent.value || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
         if (txt && txt !== "0") {
-          const fontSize = Math.max(10, (ent.height || 5) * scale); // Mínimo 10px para legibilidad
+          const fontSize = Math.max(14, (ent.height || 5) * scale); 
           ctx.fillStyle = "#e67e22";
           ctx.font = `bold ${fontSize}px Arial`;
-          const p = ent.start || ent.position || ent.center || { x: 0, y: 0 };
-          ctx.fillText(txt, dX(p.x), dY(p.y));
+          const p = ent.start || ent.position || { x: 0, y: 0 };
+          ctx.fillText(txt, x(p), y(p));
         }
       }
-      // Soporte para bloques (si el texto está dentro de un INSERT)
+      // INSERT (Protección contra el error 'entities of undefined')
       else if (ent.type === 'INSERT' && dxfRaw.blocks && dxfRaw.blocks[ent.name]) {
-        dxfRaw.blocks[ent.name].entities.forEach(blockEnt => {
-          // Ajustamos la posición de la entidad dentro del bloque a la posición del INSERT
-          const combinedEnt = { ...blockEnt };
-          if (combinedEnt.position) {
-            combinedEnt.position = { x: combinedEnt.position.x + ent.position.x, y: combinedEnt.position.y + ent.position.y };
-          }
-          if (combinedEnt.start) {
-            combinedEnt.start = { x: combinedEnt.start.x + ent.position.x, y: combinedEnt.start.y + ent.position.y };
-            combinedEnt.end = { x: combinedEnt.end.x + ent.position.x, y: combinedEnt.end.y + ent.position.y };
-          }
-          drawEntity(combinedEnt);
-        });
+        const block = dxfRaw.blocks[ent.name];
+        if (block.entities) {
+          block.entities.forEach(bEnt => drawEnt(bEnt, ent.position));
+        }
       }
     };
 
-    dxfRaw.entities.forEach(drawEntity);
+    dxfRaw.entities.forEach(ent => drawEnt(ent));
   }, [dxfRaw, scale, offset]);
-
-  // Manejadores de eventos (Zoom y Pan)
-  const handleWheel = (e) => {
-    e.preventDefault();
-    const factor = Math.pow(1.1, -e.deltaY / 400);
-    const rect = canvasRef.current.getBoundingClientRect();
-    const mX = e.clientX - rect.left;
-    const mY = e.clientY - rect.top;
-    setOffset(prev => ({ x: mX - (mX - prev.x) * factor, y: mY - (mY - prev.y) * factor }));
-    setScale(s => s * factor);
-  };
 
   return (
     <div style={{ border: '2px solid #000', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
       <canvas 
         ref={canvasRef} width={2400} height={1200} 
-        onWheel={handleWheel}
+        onWheel={(e) => {
+          e.preventDefault();
+          const factor = Math.pow(1.1, -e.deltaY / 500);
+          setScale(s => s * factor);
+        }}
         onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
         onMouseMove={(e) => {
           if (!isDragging) return;
@@ -146,13 +128,11 @@ function DxfCanvas({ dxfRaw }) {
           setLastMousePos({ x: e.clientX, y: e.clientY });
         }}
         onMouseUp={() => setIsDragging(false)}
-        onMouseLeave={() => setIsDragging(false)}
-        style={{ width: '100%', height: '800px', cursor: isDragging ? 'grabbing' : 'grab' }} 
+        style={{ width: '100%', height: '700px', cursor: 'grab', background: '#fff' }} 
       />
     </div>
   );
 }
-
 export default function Home() {
   const [dxfData, setDxfData] = useState(null);
   const [asociadoData, setAsociadoData] = useState([]);
