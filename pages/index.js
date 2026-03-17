@@ -11,31 +11,28 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  // 1. Cálculo de límites ULTRA-PRECISO
   useEffect(() => {
     if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
     const canvas = canvasRef.current;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
+    // 1. Cálculo de límites inteligente (Ignora puntos aislados)
     dxfRaw.entities.forEach(ent => {
       try {
         const pts = [];
         if (ent.vertices) pts.push(...ent.vertices);
-        if (ent.start && ent.end) pts.push(ent.start, ent.end);
+        if (ent.start && ent.end) {
+          // Si la línea mide menos de 0.5 unidades, la ignoramos para el zoom
+          const dist = Math.hypot(ent.end.x - ent.start.x, ent.end.y - ent.start.y);
+          if (dist > 0.5) pts.push(ent.start, ent.end);
+        }
         if (ent.position) pts.push(ent.position);
-        if (ent.center && ent.type === 'CIRCLE') {
-          const r = ent.radius || 0;
-          pts.push({ x: ent.center.x - r, y: ent.center.y - r }, { x: ent.center.x + r, y: ent.center.y + r });
-        }
-        // Para los ARCOS, solo usamos el centro y puntos estimados para no deformar el zoom
-        if (ent.center && ent.type === 'ARC') {
-          pts.push(ent.center);
-        }
+        if (ent.type === 'CIRCLE') pts.push(ent.center);
 
         pts.forEach(p => {
           if (p && typeof p.x === 'number' && typeof p.y === 'number') {
-            // Ignorar basura cerca del origen
-            if (Math.abs(p.x) < 0.1 && Math.abs(p.y) < 0.1 && dxfRaw.entities.length > 50) return;
+            // Filtro para ignorar entidades en el origen 0,0 que suelen ser basura
+            if (Math.abs(p.x) < 0.01 && Math.abs(p.y) < 0.01) return;
             minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
             maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
           }
@@ -46,7 +43,8 @@ function DxfCanvas({ dxfRaw }) {
     if (minX === Infinity) return;
     const width = maxX - minX;
     const height = maxY - minY;
-    const initialScale = Math.min((canvas.width - 200) / (width || 1), (canvas.height - 200) / (height || 1));
+    // Agregamos un margen mayor (250) para que el dibujo se vea grande desde el inicio
+    const initialScale = Math.min((canvas.width - 250) / (width || 1), (canvas.height - 250) / (height || 1));
     
     setScale(initialScale);
     setOffset({
@@ -55,7 +53,6 @@ function DxfCanvas({ dxfRaw }) {
     });
   }, [dxfRaw]);
 
-  // 2. Renderizado con corrección de ARCO y TEXTO
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -68,37 +65,37 @@ function DxfCanvas({ dxfRaw }) {
     dxfRaw.entities.forEach(ent => {
       try {
         ctx.lineWidth = 1.5;
-        ctx.lineCap = "round";
+        ctx.strokeStyle = "#1e272e";
 
-        // --- LINEAS ---
+        // --- DIBUJAR LÍNEAS (Con filtro de tamaño para evitar "puntos") ---
         if (ent.type === 'LINE' || ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
-          ctx.beginPath();
-          ctx.strokeStyle = "#2d3436";
           if (ent.type === 'LINE' && ent.start && ent.end) {
+            const dist = Math.hypot(ent.end.x - ent.start.x, ent.end.y - ent.start.y);
+            if (dist < 0.2) return; // No dibujar micro-líneas
+            ctx.beginPath();
             ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
             ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
-          } else if (ent.vertices) {
+            ctx.stroke();
+          } else if (ent.vertices && ent.vertices.length > 1) {
+            ctx.beginPath();
             ent.vertices.forEach((v, i) => {
               if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
               else ctx.lineTo(dX(v.x), dY(v.y));
             });
+            ctx.stroke();
           }
-          ctx.stroke();
         } 
 
-        // --- ARCOS CORREGIDOS ---
+        // --- ARCOS (Corrección de lógica de giro) ---
         else if (ent.type === 'ARC' && ent.center) {
           ctx.beginPath();
-          ctx.strokeStyle = "#2d3436";
-          // IMPORTANTE: En Canvas, los ángulos son distintos a AutoCAD
-          // Invertimos el sentido (true/false) y los ángulos
-          const startAngle = -ent.startAngle * Math.PI / 180;
-          const endAngle = -ent.endAngle * Math.PI / 180;
-          ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, startAngle, endAngle, true);
+          const startAngle = (360 - ent.endAngle) * Math.PI / 180;
+          const endAngle = (360 - ent.startAngle) * Math.PI / 180;
+          ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, startAngle, endAngle, false);
           ctx.stroke();
         }
 
-        // --- CIRCULOS ---
+        // --- CÍRCULOS (Conectores) ---
         else if (ent.type === 'CIRCLE' && ent.center) {
           ctx.beginPath();
           ctx.strokeStyle = "#0984e3";
@@ -106,21 +103,20 @@ function DxfCanvas({ dxfRaw }) {
           ctx.stroke();
         }
 
-        // --- TEXTO FORZADO ---
+        // --- TEXTO (Escaneo profundo) ---
         else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-          const rawTxt = (ent.text || ent.string || ent.value || "");
+          // Buscamos el texto en todas las propiedades posibles del parser
+          const rawTxt = ent.text || ent.string || ent.value || (ent.column && ent.column.value) || "";
           const cleanTxt = rawTxt.replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
           
-          if (cleanTxt) {
-            // Si el texto es del Excel, lo ponemos más grande
-            const isConnector = cleanTxt.length < 10; 
-            const h = (ent.height && ent.height > 0) ? ent.height : (isConnector ? 6 : 4);
+          if (cleanTxt && cleanTxt !== "0") {
+            const h = (ent.height && ent.height > 1) ? ent.height : 8; // Altura mínima de 8
             const fontSize = h * scale;
 
-            if (fontSize > 1) { // Solo si no es un punto invisible
-              ctx.fillStyle = "#e67e22"; 
+            if (fontSize > 1) { 
+              ctx.fillStyle = "#d35400"; 
               ctx.font = `bold ${fontSize}px Arial`;
-              // Probamos posición de inserción 'start' que es común en TEXT explotado
+              // Probamos posición de inserción 'start' primero
               const p = ent.start || ent.position || ent.center || { x: 0, y: 0 };
               ctx.fillText(cleanTxt, dX(p.x), dY(p.y));
             }
@@ -144,7 +140,7 @@ function DxfCanvas({ dxfRaw }) {
   return (
     <div style={{ border: '2px solid #000', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
       <canvas 
-        ref={canvasRef} width={2200} height={1100} 
+        ref={canvasRef} width={2400} height={1200} 
         onWheel={handleWheel}
         onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
         onMouseMove={(e) => {
@@ -154,7 +150,7 @@ function DxfCanvas({ dxfRaw }) {
         }}
         onMouseUp={() => setIsDragging(false)}
         onMouseLeave={() => setIsDragging(false)}
-        style={{ width: '100%', height: '750px', cursor: isDragging ? 'grabbing' : 'grab' }} 
+        style={{ width: '100%', height: '800px', cursor: isDragging ? 'grabbing' : 'grab' }} 
       />
     </div>
   );
