@@ -11,27 +11,30 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  // 1. Auto-Zoom inicial (Calcula el área real ocupada)
   useEffect(() => {
     if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
     const canvas = canvasRef.current;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
+    // 1. Bounding Box con validación estricta
     dxfRaw.entities.forEach(ent => {
-      const pts = [];
-      if (ent.vertices) pts.push(...ent.vertices);
-      if (ent.start) pts.push(ent.start, ent.end);
-      if (ent.position) pts.push(ent.position);
-      pts.forEach(p => {
-        if (!isNaN(p.x) && !isNaN(p.y)) {
-          // Filtro antipuntos basura (0,0)
-          if (Math.abs(p.x) < 0.001 && Math.abs(p.y) < 0.001 && dxfRaw.entities.length > 100) return;
-          minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-          maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-        }
-      });
+      try {
+        const pts = [];
+        if (ent.vertices) pts.push(...ent.vertices);
+        if (ent.start && ent.end) pts.push(ent.start, ent.end);
+        if (ent.position) pts.push(ent.position);
+        
+        pts.forEach(p => {
+          if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+            if (Math.abs(p.x) < 0.001 && Math.abs(p.y) < 0.001) return;
+            minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+          }
+        });
+      } catch (e) { /* Saltar entidad corrupta */ }
     });
 
+    if (minX === Infinity) return;
     const width = maxX - minX;
     const height = maxY - minY;
     const initialScale = Math.min((canvas.width - 100) / (width || 1), (canvas.height - 100) / (height || 1));
@@ -43,7 +46,6 @@ function DxfCanvas({ dxfRaw }) {
     });
   }, [dxfRaw]);
 
-  // 2. Renderizado con corrección de escala de texto
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -53,49 +55,45 @@ function DxfCanvas({ dxfRaw }) {
     const dX = (x) => x * scale + offset.x;
     const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
+    // 2. Dibujo con protección contra errores (try-catch interno)
     dxfRaw.entities.forEach(ent => {
-      ctx.beginPath();
-      ctx.lineWidth = 1; // Forzamos línea delgada siempre visible
-      ctx.strokeStyle = "#000000"; // Negro puro para las líneas/cables
+      try {
+        ctx.beginPath();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "#2c3e50";
 
-      // Dibujar LINE y LWPOLYLINE (Cables y rutas)
-      if (ent.type === 'LINE') {
-        ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
-        ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
-        ctx.stroke();
-      } 
-      else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
-        ent.vertices.forEach((v, i) => {
-          if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
-          else ctx.lineTo(dX(v.x), dY(v.y));
-        });
-        ctx.stroke();
-      }
-      // Dibujar CIRCLE (Puntos de conexión)
-      else if (ent.type === 'CIRCLE') {
-        ctx.strokeStyle = "#0055ff";
-        ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
-        ctx.stroke();
-      }
-      // Dibujar TEXT (Nombres de conectores)
-      else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-        // --- AQUÍ ESTÁ EL TRUCO PARA EL TEXTO ---
-        // Ajustamos el tamaño para que sea legible pero no una mancha
-        const baseHeight = ent.height || 2.5; 
-        const fontSize = baseHeight * scale;
-        
-        if (fontSize > 1) { // Solo dibujar si no es un punto invisible
-          ctx.fillStyle = "#ff6600"; 
-          ctx.font = `${fontSize}px Arial`;
-          const p = ent.position || ent.start || { x: 0, y: 0 };
-          const text = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ");
-          ctx.fillText(text, dX(p.x), dY(p.y));
+        if (ent.type === 'LINE' && ent.start && ent.end) {
+          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
+          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+          ctx.stroke();
+        } 
+        else if ((ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && ent.vertices) {
+          ent.vertices.forEach((v, i) => {
+            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
+            else ctx.lineTo(dX(v.x), dY(v.y));
+          });
+          ctx.stroke();
         }
-      }
+        else if (ent.type === 'CIRCLE' && ent.center) {
+          ctx.strokeStyle = "#3498db";
+          ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
+          ctx.stroke();
+        }
+        else if ((ent.type === 'TEXT' || ent.type === 'MTEXT') && scale > 0.5) {
+          const fontSize = Math.max(0.5, (ent.height || 2) * scale);
+          if (fontSize > 2) {
+            ctx.fillStyle = "#e67e22";
+            ctx.font = `${fontSize}px Arial`;
+            const p = ent.position || ent.start || { x: 0, y: 0 };
+            const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ");
+            ctx.fillText(txt, dX(p.x), dY(p.y));
+          }
+        }
+      } catch (err) { /* Si una entidad falla, el resto sigue dibujándose */ }
     });
   }, [dxfRaw, scale, offset]);
 
-  // Manejadores de eventos (Zoom en el puntero)
+  // Manejadores de Zoom/Pan (se mantienen iguales)
   const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 250);
@@ -106,20 +104,20 @@ function DxfCanvas({ dxfRaw }) {
     setScale(s => s * factor);
   };
 
-  const onMouseDown = (e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); };
-  const onMouseMove = (e) => {
-    if (!isDragging) return;
-    setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
-    setLastMousePos({ x: e.clientX, y: e.clientY });
-  };
-
   return (
-    <div style={{ border: '1px solid #000', borderRadius: '4px', overflow: 'hidden', background: '#fff' }}>
+    <div style={{ border: '1px solid #333', background: '#fff' }}>
       <canvas 
-        ref={canvasRef} width={1800} height={800} 
-        onWheel={handleWheel} onMouseDown={onMouseDown} onMouseMove={onMouseMove}
-        onMouseUp={() => setIsDragging(false)} onMouseLeave={() => setIsDragging(false)}
-        style={{ width: '100%', cursor: isDragging ? 'grabbing' : 'grab' }} 
+        ref={canvasRef} width={2000} height={1000} 
+        onWheel={handleWheel}
+        onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
+        onMouseMove={(e) => {
+          if (!isDragging) return;
+          setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
+          setLastMousePos({ x: e.clientX, y: e.clientY });
+        }}
+        onMouseUp={() => setIsDragging(false)}
+        onMouseLeave={() => setIsDragging(false)}
+        style={{ width: '100%', height: '600px', cursor: isDragging ? 'grabbing' : 'grab' }} 
       />
     </div>
   );
