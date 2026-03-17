@@ -11,37 +11,33 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
+  // 1. AUTO-ZOOM INICIAL (Ajustado para que se vea grande)
   useEffect(() => {
     if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
     const canvas = canvasRef.current;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
-    // 1. Cálculo de límites con FILTRO DE RUIDO
     dxfRaw.entities.forEach(ent => {
       const check = (p) => {
         if (p && typeof p.x === 'number') {
-          // Ignoramos puntos exactamente en 0,0 para que no arruinen el zoom
-          if (Math.abs(p.x) < 0.001 && Math.abs(p.y) < 0.001) return;
+          // Ignoramos el 0,0 para que no aleje el zoom
+          if (Math.abs(p.x) < 0.1 && Math.abs(p.y) < 0.1) return;
           minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
           maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
         }
       };
-      
-      // Solo tomamos en cuenta para el zoom entidades de tamaño relevante
-      if (ent.type === 'LINE' || ent.type === 'ARC') {
-        const d = ent.radius || (ent.start && Math.hypot(ent.end.x - ent.start.x, ent.end.y - ent.start.y));
-        if (d > 0.5) {
-          if (ent.start) { check(ent.start); check(ent.end); }
-          if (ent.center) check(ent.center);
-        }
-      }
+      if (ent.vertices) ent.vertices.forEach(check);
+      if (ent.start) { check(ent.start); check(ent.end); }
+      if (ent.position) check(ent.position);
+      if (ent.center) check(ent.center);
     });
 
     if (minX === Infinity) return;
     const width = maxX - minX;
     const height = maxY - minY;
-    const initialScale = Math.min((canvas.width - 200) / (width || 1), (canvas.height - 200) / (height || 1));
     
+    // Margen más pequeño (100) para que el dibujo sea más grande
+    const initialScale = Math.min((canvas.width - 100) / (width || 1), (canvas.height - 100) / (height || 1));
     setScale(initialScale);
     setOffset({
       x: (canvas.width / 2) - (minX + width / 2) * initialScale,
@@ -49,6 +45,7 @@ function DxfCanvas({ dxfRaw }) {
     });
   }, [dxfRaw]);
 
+  // 2. RENDERIZADO
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -63,69 +60,93 @@ function DxfCanvas({ dxfRaw }) {
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = "#1e272e";
 
-        // --- FILTRO DE MINI-LÍNEAS (LIMPIEZA) ---
-        if (ent.type === 'LINE') {
-          const dist = Math.hypot(ent.end.x - ent.start.x, ent.end.y - ent.start.y);
-          if (dist < 0.5) return; // Ignora las "líneas-punto"
+        // LINEAS
+        if (ent.type === 'LINE' || ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
           ctx.beginPath();
-          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
-          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+          if (ent.type === 'LINE') {
+            ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
+            ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+          } else if (ent.vertices) {
+            ent.vertices.forEach((v, i) => {
+              if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
+              else ctx.lineTo(dX(v.x), dY(v.y));
+            });
+          }
           ctx.stroke();
         } 
-        
-        else if (ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
-          if (!ent.vertices || ent.vertices.length < 2) return;
-          ctx.beginPath();
-          ent.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
-            else ctx.lineTo(dX(v.x), dY(v.y));
-          });
-          ctx.stroke();
-        }
-
+        // ARCOS
         else if (ent.type === 'ARC' && ent.center) {
-          if (ent.radius < 0.5) return; // Ignora arcos minúsculos
           ctx.beginPath();
           const sA = (360 - ent.endAngle) * Math.PI / 180;
           const eA = (360 - ent.startAngle) * Math.PI / 180;
           ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, sA, eA, false);
           ctx.stroke();
         }
-
-        // --- TEXTO (SOLUCIÓN AL AMONTONAMIENTO) ---
-        else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-          const txt = (ent.text || ent.string || ent.value || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
-          
-          if (txt && txt !== "0") {
-            // Buscamos una posición que NO sea (0,0)
-            const p = ent.start || ent.position || ent.center;
-            
-            // Si la posición es 0,0, es probable que sea texto basura del bloque explotado
-            if (Math.abs(p.x) < 0.1 && Math.abs(p.y) < 0.1) return;
-
-            const fontSize = Math.max(12, (ent.height || 5) * scale);
-            ctx.fillStyle = "#d35400"; // Naranja para identificarlo
-            ctx.font = `bold ${fontSize}px Arial`;
-            ctx.fillText(txt, dX(p.x), dY(p.y));
-          }
-        }
-
+        // CIRCULOS (Conectores)
         else if (ent.type === 'CIRCLE' && ent.center) {
-          if (ent.radius < 0.5) return;
           ctx.beginPath();
           ctx.strokeStyle = "#0984e3";
           ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, 0, 2 * Math.PI);
           ctx.stroke();
         }
-      } catch (err) {}
+        // TEXTO (Con filtro para evitar amontonamiento)
+        else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+          const txt = (ent.text || ent.string || ent.value || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
+          if (txt && txt !== "0") {
+            const p = ent.start || ent.position || ent.center;
+            if (p && (Math.abs(p.x) > 1 || Math.abs(p.y) > 1)) {
+              const fontSize = Math.max(12, (ent.height || 4) * scale);
+              ctx.fillStyle = "#e67e22";
+              ctx.font = `bold ${fontSize}px Arial`;
+              ctx.fillText(txt, dX(p.x), dY(p.y));
+            }
+          }
+        }
+      } catch (e) {}
     });
   }, [dxfRaw, scale, offset]);
 
-  // Handlers de Zoom/Pan (se mantienen iguales)
-  // ... (handleWheel, onMouseDown, etc.)
+  // 3. EVENTOS DE MOUSE (ZOOM Y PAN RESTAURADOS)
+  const handleWheel = (e) => {
+    e.preventDefault();
+    const factor = Math.pow(1.1, -e.deltaY / 500);
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mX = e.clientX - rect.left;
+    const mY = e.clientY - rect.top;
+
+    setOffset(prev => ({
+      x: mX - (mX - prev.x) * factor,
+      y: mY - (mY - prev.y) * factor
+    }));
+    setScale(s => s * factor);
+  };
+
+  const handleMouseDown = (e) => {
+    setIsDragging(true);
+    setLastMousePos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isDragging) return;
+    const dx = e.clientX - lastMousePos.x;
+    const dy = e.clientY - lastMousePos.y;
+    setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+    setLastMousePos({ x: e.clientX, y: e.clientY });
+  };
+
   return (
     <div style={{ border: '2px solid #000', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
-      <canvas ref={canvasRef} width={2400} height={1200} style={{ width: '100%', height: '750px' }} />
+      <canvas 
+        ref={canvasRef} 
+        width={2400} 
+        height={1200} 
+        onWheel={handleWheel}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={() => setIsDragging(false)}
+        onMouseLeave={() => setIsDragging(false)}
+        style={{ width: '100%', height: '750px', cursor: isDragging ? 'grabbing' : 'grab' }} 
+      />
     </div>
   );
 }
