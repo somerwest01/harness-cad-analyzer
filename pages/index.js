@@ -89,21 +89,20 @@ else if (ent.type === 'CIRCLE' && ent.center) {
 else if (ent.type === 'ARC' && ent.center) {
   ctx.beginPath();
   
-  // 1. Convertir ángulos de grados a radianes
+  // 1. Convertimos a radianes
   const startRad = ent.startAngle * Math.PI / 180;
   const endRad = ent.endAngle * Math.PI / 180;
 
-  // 2. Dibujar el arco
-  // Usamos -startRad y -endRad porque tu eje Y está invertido globalmente.
-  // El último parámetro 'true' es CRUCIAL: le dice al canvas que 
-  // dibuje el camino "corto" en sentido antihorario.
+  // 2. Dibujamos el arco
+  // Si tus líneas se mueven bien, este arco SE MOVERÁ BIEN siempre que esté
+  // dentro del bloque ctx.save() ... ctx.restore()
   ctx.arc(
     ent.center.x, 
     ent.center.y, 
     ent.radius, 
     -startRad, 
     -endRad, 
-    true 
+    true // <-- Esto evita que se convierta en un círculo completo
   );
   
   ctx.stroke();
