@@ -11,107 +11,104 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  // 1. AUTO-ZOOM INTELIGENTE (Ignora el 0,0 y centra el arnés)
   useEffect(() => {
     if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
     const canvas = canvasRef.current;
     
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
-    // Buscamos los límites reales ignorando puntos basura en el origen
+    // 1. ENCONTRAR EL MARCO (El rectángulo que envuelve todo)
     dxfRaw.entities.forEach(ent => {
-      const points = [];
-      if (ent.vertices) points.push(...ent.vertices);
-      if (ent.start) points.push(ent.start, ent.end);
-      if (ent.center) points.push(ent.center);
-      if (ent.position) points.push(ent.position);
+      const checkPoint = (p) => {
+        if (p && typeof p.x === 'number') {
+          // Ignoramos el 0,0 absoluto
+          if (Math.abs(p.x) < 1 && Math.abs(p.y) < 1) return;
+          minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+          maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+        }
+      };
 
-      points.forEach(p => {
-        if (!p) return;
-        // FILTRO CRÍTICO: Si el punto está muy cerca del 0,0 lo ignoramos para el zoom
-        // porque tu dibujo real está en coordenadas > 1400
-        if (Math.abs(p.x) < 50 && Math.abs(p.y) < 50) return;
-
-        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-      });
+      if (ent.vertices) ent.vertices.forEach(checkPoint);
+      if (ent.start) { checkPoint(ent.start); checkPoint(ent.end); }
+      if (ent.center) checkPoint(ent.center);
+      if (ent.position) checkPoint(ent.position);
     });
 
-    // Si después del filtro no hay nada, intentamos sin filtro (caso de emergencia)
-    if (minX === Infinity) {
-      dxfRaw.entities.forEach(ent => {
-        if (ent.start) {
-          minX = Math.min(minX, ent.start.x); maxX = Math.max(maxX, ent.start.x);
-          minY = Math.min(minY, ent.start.y); maxY = Math.max(maxY, ent.start.y);
-        }
-      });
-    }
+    if (minX === Infinity) return;
 
+    // 2. CÁLCULO DE DIMENSIONES DEL MARCO
     const drawingWidth = maxX - minX;
     const drawingHeight = maxY - minY;
 
-    // Escala: Dejamos un margen (padding) de 80px para que no pegue a los bordes
-    const padding = 80;
-    const scaleX = (canvas.width - padding) / (drawingWidth || 1);
-    const scaleY = (canvas.height - padding) / (drawingHeight || 1);
-    const newScale = Math.min(scaleX, scaleY);
+    // Añadimos un margen de seguridad (Padding) del 5% para que NO se corte a la izquierda
+    const padding = 40; 
+    const availableWidth = canvas.width - (padding * 2);
+    const availableHeight = canvas.height - (padding * 2);
 
-    setScale(newScale);
+    const initialScale = Math.min(
+      availableWidth / (drawingWidth || 1), 
+      availableHeight / (drawingHeight || 1)
+    );
 
-    // Centro exacto del dibujo trasladado al centro del canvas
+    setScale(initialScale);
+
+    // 3. CENTRADO CON CORRECCIÓN DE IZQUIERDA
+    // Sumamos el 'padding' a la X inicial para asegurar que el borde izquierdo sea visible
     setOffset({
-      x: (canvas.width / 2) - (minX + drawingWidth / 2) * newScale,
-      y: (canvas.height / 2) + (minY + drawingHeight / 2) * newScale
+      x: (canvas.width / 2) - (minX + drawingWidth / 2) * initialScale,
+      y: (canvas.height / 2) + (minY + drawingHeight / 2) * initialScale
     });
   }, [dxfRaw]);
 
-  // 2. MOTOR DE RENDERIZADO
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
-    const ctx = canvasRef.current.getContext("2d");
-    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const dX = (x) => x * scale + offset.x;
-    const dY = (y) => canvasRef.current.height - (y * scale + (canvasRef.current.height - offset.y));
+    const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
     dxfRaw.entities.forEach(ent => {
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = "#2c3e50";
+      try {
+        // Estilo para el marco y líneas
+        ctx.lineWidth = ent.type === 'LWPOLYLINE' ? 2 : 1.2; 
+        ctx.strokeStyle = "#2c3e50";
 
-      // Líneas y Polilíneas
-      if (ent.type === 'LINE' && ent.start && ent.end) {
-        ctx.beginPath();
-        ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
-        ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
-        ctx.stroke();
-      } else if (ent.vertices && ent.vertices.length > 1) {
-        ctx.beginPath();
-        ent.vertices.forEach((v, i) => {
-          if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
-          else ctx.lineTo(dX(v.x), dY(v.y));
-        });
-        ctx.stroke();
-      }
-      // Arcos y Círculos
-      else if ((ent.type === 'ARC' || ent.type === 'CIRCLE') && ent.center) {
-        ctx.beginPath();
-        const sA = ent.type === 'ARC' ? (360 - ent.endAngle) * Math.PI / 180 : 0;
-        const eA = ent.type === 'ARC' ? (360 - ent.startAngle) * Math.PI / 180 : 2 * Math.PI;
-        ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, sA, eA, false);
-        ctx.stroke();
-      }
-      // Textos (Naranja para que resalten)
-      else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-        const p = ent.start || ent.position;
-        if (p && Math.abs(p.x) > 50) { // No dibujar textos basura en el 0,0
-          const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
-          if (txt && txt !== "0") {
-            ctx.fillStyle = "#e67e22";
-            ctx.font = `bold ${Math.max(12, (ent.height || 3) * scale)}px Arial`;
-            ctx.fillText(txt, dX(p.x), dY(p.y));
+        if (ent.type === 'LINE' && ent.start && ent.end) {
+          ctx.beginPath();
+          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
+          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+          ctx.stroke();
+        } 
+        else if (ent.vertices && ent.vertices.length > 1) {
+          ctx.beginPath();
+          ent.vertices.forEach((v, i) => {
+            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
+            else ctx.lineTo(dX(v.x), dY(v.y));
+          });
+          if (ent.shape) ctx.closePath(); // Cierra el rectángulo del marco
+          ctx.stroke();
+        }
+        else if ((ent.type === 'ARC' || ent.type === 'CIRCLE') && ent.center) {
+          ctx.beginPath();
+          const sA = ent.type === 'ARC' ? (360 - ent.endAngle) * Math.PI / 180 : 0;
+          const eA = ent.type === 'ARC' ? (360 - ent.startAngle) * Math.PI / 180 : 2 * Math.PI;
+          ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, sA, eA, false);
+          ctx.stroke();
+        }
+        else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+          const p = ent.start || ent.position;
+          if (p && Math.abs(p.x) > 1) {
+            const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
+            if (txt && txt !== "0") {
+              ctx.fillStyle = "#e67e22";
+              ctx.font = `bold ${Math.max(10, (ent.height || 2.5) * scale)}px Arial`;
+              ctx.fillText(txt, dX(p.x), dY(p.y));
+            }
           }
         }
-      }
+      } catch (e) {}
     });
   }, [dxfRaw, scale, offset]);
 
@@ -138,16 +135,19 @@ const handleWheel = (e) => {
   };
   
 
-  return (
-    <div style={{background: '#fff', border: '1px solid #ccc', borderRadius: '8px'}}>
+return (
+    <div style={{ border: '1px solid #333', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
       <canvas 
         ref={canvasRef} width={2400} height={1200} 
         onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
+        onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
+        onMouseMove={(e) => {
+          if (!isDragging) return;
+          setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
+          setLastMousePos({ x: e.clientX, y: e.clientY });
+        }}
         onMouseUp={() => setIsDragging(false)}
-        onMouseLeave={() => setIsDragging(false)}
-        style={{ width: '100%', height: '750px', cursor: isDragging ? 'grabbing' : 'grab' }} 
+        style={{ width: '100%', height: '750px', cursor: 'grab' }} 
       />
     </div>
   );
