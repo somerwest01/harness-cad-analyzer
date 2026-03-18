@@ -3,8 +3,7 @@ import DxfParser from "dxf-parser";
 import * as XLSX from "xlsx";
 import styles from "./Home.module.css";
 
-// --- VISOR PARA DIBUJOS EXPLOTADOS ---
-// --- VISOR PARA DIBUJOS EXPLOTADOS (SIN ARCOS) ---
+
 function DxfCanvas({ dxfRaw }) {
   const canvasRef = useRef(null);
   const [scale, setScale] = useState(1);
@@ -131,7 +130,6 @@ export default function Home() {
   const [asociadoData, setAsociadoData] = useState([]);
   const [partNumber, setPartNumber] = useState("");
   const [isTableVisible, setIsTableVisible] = useState(true);
-  const [isDxfPanelVisible, setIsDxfPanelVisible] = useState(true);
   const [isCanvasVisible, setIsCanvasVisible] = useState(true);
 
   const handleExcel = (e) => {
@@ -174,6 +172,17 @@ export default function Home() {
     try {
       const text = await file.text();
       const dxf = new DxfParser().parseSync(text);
+
+      // --- PASO 1: EXTRAER DIMENSIONES (RAMALES) ---
+      // Filtramos solo los textos que son números (ej. "152", "508")
+      const dimensions = dxf.entities
+        .filter(ent => ent.type === "TEXT" || ent.type === "MTEXT")
+        .map(ent => ({
+          val: (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").replace(/\\[a-zA-Z].*?;/g, "").trim(),
+        }))
+        .filter(d => !isNaN(d.val) && d.val !== "" && d.val !== "0");
+
+      // Filtramos etiquetas de conectores para el Status
       const allTexts = dxf.entities
         .filter(ent => ent.type === "TEXT" || ent.type === "MTEXT")
         .map(ent => (ent.text || ent.string || "").trim().toUpperCase());
@@ -181,14 +190,25 @@ export default function Home() {
       if (asociadoData.length > 0) {
         const keys = Object.keys(asociadoData[0]);
         const connKey = keys[2]; 
-        setAsociadoData(prev => prev.map(row => {
+        
+        setAsociadoData(prev => prev.map((row, index) => {
           const name = String(row[connKey]).trim().toUpperCase();
           const found = allTexts.some(t => t.includes(name) && name !== "");
-          return { ...row, "Status": found ? "✅ Encontrado" : "❌ No en dibujo" };
+          
+          // Asignación de Ramal: 
+          // Intentamos asignar una dimensión de la lista basada en el orden 
+          // o puedes dejarlo como "N/A" si no hay suficientes dimensiones
+          const ramalVal = dimensions[index] ? dimensions[index].val : (dimensions[0]?.val || "N/A");
+
+          return { 
+            ...row, 
+            "Ramal": ramalVal, 
+            "Status": found ? "✅ Encontrado" : "❌ No en dibujo" 
+          };
         }));
       }
 
-      setDxfData({ total: dxf.entities.length, raw: dxf, layers: Object.keys(dxf.tables.layer.layers) });
+      setDxfData({ total: dxf.entities.length, raw: dxf });
     } catch (err) { alert("Error al leer DXF"); }
   };
 
@@ -215,22 +235,37 @@ export default function Home() {
           </div>
           {isTableVisible && (
             <div className={styles.scrollArea}>
+              {/* --- PASO 2: ESTRUCTURA DE TABLA CON COLUMNA RAMAL --- */}
               <table className={styles.table}>
-                <thead><tr>{Object.keys(asociadoData[0]).map(k => <th key={k}>{k}</th>)}</tr></thead>
+                <thead>
+                  <tr>
+                    <th>Ramal</th>
+                    {Object.keys(asociadoData[0])
+                      .filter(k => k !== "Ramal")
+                      .map(k => <th key={k}>{k}</th>)}
+                  </tr>
+                </thead>
                 <tbody>
                   {asociadoData.map((row, i) => (
                     <tr key={i}>
-                      {Object.values(row).map((v, j) => {
-                        // FIX: Convertimos v a String para evitar el error .includes
-                        const valStr = String(v);
-                        const isOk = valStr.includes("✅");
-                        const isNok = valStr.includes("❌");
-                        return (
-                          <td key={j} style={{ color: isOk ? "green" : isNok ? "red" : "inherit", fontWeight: (isOk || isNok) ? "bold" : "normal" }}>
-                            {valStr}
-                          </td>
-                        );
-                      })}
+                      <td style={{ fontWeight: "bold", color: "#2980b9" }}>
+                        {row.Ramal}
+                      </td>
+                      {Object.keys(row)
+                        .filter(k => k !== "Ramal")
+                        .map((k, j) => {
+                          const valStr = String(row[k]);
+                          const isOk = valStr.includes("✅");
+                          const isNok = valStr.includes("❌");
+                          return (
+                            <td key={j} style={{ 
+                              color: isOk ? "green" : isNok ? "red" : "inherit", 
+                              fontWeight: (isOk || isNok) ? "bold" : "normal" 
+                            }}>
+                              {valStr}
+                            </td>
+                          );
+                        })}
                     </tr>
                   ))}
                 </tbody>
