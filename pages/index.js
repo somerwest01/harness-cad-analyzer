@@ -15,7 +15,6 @@ function DxfCanvas({ dxfRaw }) {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
 
-    // 1. Límites exactos del dibujo
     const minX = 1413.27;
     const maxX = 2047.99;
     const minY = 481.35;
@@ -23,8 +22,7 @@ function DxfCanvas({ dxfRaw }) {
 
     const dxfWidth = maxX - minX;
     const dxfHeight = maxY - minY;
-
-    const padding = 60; // Aumentamos un poco el padding para los textos
+    const padding = 40;
     const availableWidth = canvas.width - padding * 2;
     const availableHeight = canvas.height - padding * 2;
 
@@ -33,7 +31,6 @@ function DxfCanvas({ dxfRaw }) {
     const newScale = Math.min(scaleX, scaleY);
 
     setScale(newScale);
-
     setOffset({
       x: (canvas.width / 2) - (minX + dxfWidth / 2) * newScale,
       y: (canvas.height / 2) + (minY + dxfHeight / 2) * newScale 
@@ -46,23 +43,22 @@ function DxfCanvas({ dxfRaw }) {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Funciones de conversión coherentes para todas las entidades
     const dX = (x) => x * scale + offset.x;
     const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
     dxfRaw.entities.forEach(ent => {
       try {
-        ctx.strokeStyle = "#2c3e50";
         ctx.lineWidth = 1.2;
+        ctx.strokeStyle = "#2c3e50";
 
-        // --- DIBUJO DE LÍNEAS ---
+        // LINEAS
         if (ent.type === 'LINE' && ent.start && ent.end) {
           ctx.beginPath();
           ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
           ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
           ctx.stroke();
         } 
-        // --- DIBUJO DE POLILÍNEAS ---
+        // POLILINEAS
         else if (ent.vertices && ent.vertices.length > 1) {
           ctx.beginPath();
           ent.vertices.forEach((v, i) => {
@@ -72,13 +68,13 @@ function DxfCanvas({ dxfRaw }) {
           if (ent.shape) ctx.closePath();
           ctx.stroke();
         }
-        // --- DIBUJO DE CÍRCULOS ---
+        // CIRCULOS
         else if (ent.type === 'CIRCLE' && ent.center) {
           ctx.beginPath();
           ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, 0, 2 * Math.PI);
           ctx.stroke();
         } 
-        // --- DIBUJO DE ARCOS ---
+        // ARCOS
         else if (ent.type === 'ARC' && ent.center) {
           ctx.beginPath();
           const startRad = (360 - ent.endAngle) * Math.PI / 180;
@@ -86,50 +82,45 @@ function DxfCanvas({ dxfRaw }) {
           ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, startRad, endRad, false);
           ctx.stroke();
         }
-        // --- DIBUJO DE TEXTO (CORREGIDO) ---
+        // --- TEXTO CORREGIDO ---
         else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-          // Buscamos la posición en 'position' o 'insert' (depende del parser y tipo)
-          const p = ent.position || ent.insert; 
+          // Intentar obtener la posición de varias formas posibles según el parser
+          const p = ent.position || ent.startPoint || ent.insert;
           
           if (p) {
-            // Limpieza de formato MTEXT (quita códigos como \P, { }, etc.)
-            let txt = (ent.text || ent.string || "");
-            txt = txt.replace(/\{.*?\}/g, "")
-                     .replace(/\\P/g, " ")
-                     .replace(/\^I/g, " ")
-                     .replace(/\\[a-zA-Z].*?;/g, "") // Quita formatos de fuente de MTEXT
-                     .trim();
-
+            // Limpiamos el texto de códigos de formato de AutoCAD
+            let txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").replace(/\\[a-zA-Z].*?;/g, "").trim();
+            
             if (txt && txt !== "0") {
-              ctx.fillStyle = "#d35400"; // Naranja oscuro para que resalte
-              // Escalamos el tamaño de fuente con el zoom, pero ponemos un mínimo para legibilidad
-              const fontSize = Math.max(8, (ent.height || 2.5) * scale);
+              // FORZAMOS COLOR ROJO PARA PRUEBA
+              ctx.fillStyle = "#FF0000"; 
+              
+              // Forzamos un tamaño mínimo de 15px para que se vea sí o sí
+              const fontSize = Math.max(15, (ent.height || 5) * scale);
               ctx.font = `bold ${fontSize}px Arial`;
               
-              // dY(p.y) posiciona el texto en la coordenada correcta
+              // Dibujamos el texto
               ctx.fillText(txt, dX(p.x), dY(p.y));
+              
+              // DEBUG: Opcional, dibuja un puntito donde debería estar el texto
+              ctx.fillRect(dX(p.x), dY(p.y), 2, 2);
             }
           }
         }
       } catch (e) {
-        console.error("Error en entidad:", ent.type, e);
+        console.error("Error en entidad:", ent);
       }
     });
   }, [dxfRaw, scale, offset]);
 
-  // Handlers de Mouse (Zoom y Pan) permanecen iguales
+  // Handlers de Mouse (Zoom y Pan)
   const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 400);
     const rect = canvasRef.current.getBoundingClientRect();
     const mX = e.clientX - rect.left;
     const mY = e.clientY - rect.top;
-    
-    // Aplicamos el zoom manteniendo el punto bajo el mouse fijo
-    setOffset(prev => ({ 
-      x: mX - (mX - prev.x) * factor, 
-      y: mY - (mY - prev.y) * factor 
-    }));
+    setOffset(prev => ({ x: mX - (mX - prev.x) * factor, y: mY - (mY - prev.y) * factor }));
     setScale(s => s * factor);
   };
 
