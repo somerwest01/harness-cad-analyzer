@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import styles from "./Home.module.css";
 
 // --- VISOR PARA DIBUJOS EXPLOTADOS ---
+// --- VISOR PARA DIBUJOS EXPLOTADOS (SIN ARCOS) ---
 function DxfCanvas({ dxfRaw }) {
   const canvasRef = useRef(null);
   const [scale, setScale] = useState(1);
@@ -15,7 +16,7 @@ function DxfCanvas({ dxfRaw }) {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
     
-    // Límites para centrado inicial (mantener igual)
+    // Límites de tu arnés específico
     const minX = 1413.27;
     const maxX = 2047.99;
     const minY = 481.35;
@@ -50,16 +51,16 @@ function DxfCanvas({ dxfRaw }) {
     dxfRaw.entities.forEach(ent => {
       try {
         ctx.lineWidth = 1.2;
-        ctx.strokeStyle = "#2c3e50"; // Color de líneas
+        ctx.strokeStyle = "#2c3e50";
 
-        // --- LINEAS, POLILINEAS, CIRCULOS, ARCOS ---
-        // (Mantener esta lógica igual, ya que funciona bien)
+        // 1. LINEAS
         if (ent.type === 'LINE' && ent.start && ent.end) {
           ctx.beginPath();
           ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
           ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
           ctx.stroke();
         } 
+        // 2. POLILINEAS (Marcos y conectores)
         else if (ent.vertices && ent.vertices.length > 1) {
           ctx.beginPath();
           ent.vertices.forEach((v, i) => {
@@ -69,19 +70,13 @@ function DxfCanvas({ dxfRaw }) {
           if (ent.shape) ctx.closePath();
           ctx.stroke();
         }
+        // 3. CIRCULOS
         else if (ent.type === 'CIRCLE' && ent.center) {
           ctx.beginPath();
           ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, 0, 2 * Math.PI);
           ctx.stroke();
         } 
-        else if (ent.type === 'ARC' && ent.center) {
-          ctx.beginPath();
-          const startRad = (360 - ent.endAngle) * Math.PI / 180;
-          const endRad = (360 - ent.startAngle) * Math.PI / 180;
-          ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, startRad, endRad, false);
-          ctx.stroke();
-        }
-        // --- TEXTO CORREGIDO (Color, Tamaño, Sin Punto) ---
+        // 4. TEXTO (Etiquetas J1, J2, etc.)
         else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
           const p = ent.position || ent.startPoint || ent.insert;
           
@@ -89,28 +84,20 @@ function DxfCanvas({ dxfRaw }) {
             let txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").replace(/\\[a-zA-Z].*?;/g, "").trim();
             
             if (txt && txt !== "0") {
-              // 1. CAMBIO DE COLOR A NEGRO
-              ctx.fillStyle = "#000000"; 
-              
-              // 2. CAMBIO DE TAMAÑO (Reducido de Math.max(15,...) a Math.max(10,...))
-              // y reducido el multiplicador de altura de (ent.height || 5) a (ent.height || 3.5)
-              const fontSize = Math.max(10, (ent.height || 3.5) * scale);
-              ctx.font = `normal ${fontSize}px Arial`; // También cambié 'bold' a 'normal' para que se vea más limpio al ser pequeño
-              
-              // Dibujamos el texto
+              ctx.fillStyle = "#000000"; // Negro
+              const fontSize = Math.max(10, (ent.height || 3.5) * scale); // Tamaño ajustado
+              ctx.font = `normal ${fontSize}px Arial`;
               ctx.fillText(txt, dX(p.x), dY(p.y));
-              
-              // --- 3. SOLUCIÓN AL PUNTO MISTERIOSO ---
-              // He eliminado la línea: ctx.fillRect(dX(p.x), dY(p.y), 2, 2);
-              // que era la que dibujaba ese puntito rojo de debug.
+              // El punto rojo de debug ha sido eliminado aquí
             }
           }
         }
+        // NOTA: Se ha eliminado el bloque de 'ARC' para simplificar el dibujo
       } catch (e) {}
     });
   }, [dxfRaw, scale, offset]);
 
-  // Handlers de Mouse (Zoom y Pan) permanecen iguales...
+  // Handlers de Mouse permanecen iguales...
   const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 400);
@@ -129,9 +116,7 @@ function DxfCanvas({ dxfRaw }) {
         onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
         onMouseMove={(e) => {
           if (!isDragging) return;
-          const dx = e.clientX - lastMousePos.x;
-          const dy = e.clientY - lastMousePos.y;
-          setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+          setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
           setLastMousePos({ x: e.clientX, y: e.clientY });
         }}
         onMouseUp={() => setIsDragging(false)}
@@ -141,7 +126,6 @@ function DxfCanvas({ dxfRaw }) {
     </div>
   );
 }
-
 export default function Home() {
   const [dxfData, setDxfData] = useState(null);
   const [asociadoData, setAsociadoData] = useState([]);
