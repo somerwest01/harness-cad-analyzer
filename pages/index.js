@@ -81,27 +81,26 @@ useEffect(() => {
         }
 else if (ent.type === 'CIRCLE' && ent.center) {
   ctx.beginPath();
-  // No multiplicar por scale, no usar dX/dY. Usar coordenadas puras del DXF.
-  ctx.arc(ent.center.x, ent.center.y, ent.radius, 0, 2 * Math.PI);
+  // IMPORTANTE: Si tus líneas usan dX y dY, los arcos DEBEN usar lo mismo
+  // Pero el radio DEBE multiplicarse por la escala manualmente si dX/dY no lo hacen
+  ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, 0, 2 * Math.PI);
   ctx.stroke();
 } 
 else if (ent.type === 'ARC' && ent.center) {
   ctx.beginPath();
   
-  // 1. Ángulos directos en radianes
-  const startRad = ent.startAngle * Math.PI / 180;
-  const endRad = ent.endAngle * Math.PI / 180;
+  // 1. Ángulos (ajustados para la inversión de eje Y del canvas)
+  const startRad = (360 - ent.endAngle) * Math.PI / 180;
+  const endRad = (360 - ent.startAngle) * Math.PI / 180;
 
-  // 2. Dibujo del arco
-  // Usamos -startRad y -endRad porque el eje Y está invertido globalmente
-  // El parámetro 'true' hace que el arco recorra el camino correcto en un eje invertido
+  // 2. Dibujo
   ctx.arc(
-    ent.center.x, 
-    ent.center.y, 
-    ent.radius, 
-    -startRad, 
-    -endRad, 
-    true
+    dX(ent.center.x),    // Misma función que usas para LINE
+    dY(ent.center.y),    // Misma función que usas para LINE
+    ent.radius * scale,  // El radio escalado
+    startRad, 
+    endRad, 
+    false                // Sentido horario
   );
   
   ctx.stroke();
