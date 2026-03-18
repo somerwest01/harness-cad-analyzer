@@ -11,43 +11,34 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-useEffect(() => {
-  if (!dxfRaw || !canvasRef.current) return;
-  const canvas = canvasRef.current;
-  const ctx = canvas.getContext("2d");
+  useEffect(() => {
+    if (!dxfRaw || !canvasRef.current) return;
+    const canvas = canvasRef.current;
 
-  // 1. Límites exactos del dibujo (según tu archivo 700176.dxf)
-  const minX = 1413.27;
-  const maxX = 2047.99;
-  const minY = 481.35;
-  const maxY = 777.74;
+    // 1. Límites exactos del dibujo
+    const minX = 1413.27;
+    const maxX = 2047.99;
+    const minY = 481.35;
+    const maxY = 777.74;
 
-  const dxfWidth = maxX - minX;
-  const dxfHeight = maxY - minY;
+    const dxfWidth = maxX - minX;
+    const dxfHeight = maxY - minY;
 
-  // 2. Definir un margen (p.ej. 10% del espacio)
-  const padding = 40;
-  const availableWidth = canvas.width - padding * 2;
-  const availableHeight = canvas.height - padding * 2;
+    const padding = 60; // Aumentamos un poco el padding para los textos
+    const availableWidth = canvas.width - padding * 2;
+    const availableHeight = canvas.height - padding * 2;
 
-  // 3. Calcular escala para que quepa en ancho O alto (lo que sea más restrictivo)
-  const scaleX = availableWidth / dxfWidth;
-  const scaleY = availableHeight / dxfHeight;
-  const newScale = Math.min(scaleX, scaleY);
+    const scaleX = availableWidth / dxfWidth;
+    const scaleY = availableHeight / dxfHeight;
+    const newScale = Math.min(scaleX, scaleY);
 
-  setScale(newScale);
+    setScale(newScale);
 
-  // 4. Centrar el dibujo
-  // El centro del DXF es (minX + dxfWidth / 2)
-  // Queremos que ese punto coincida con el centro del canvas (canvas.width / 2)
-  setOffset({
-    x: (canvas.width / 2) - (minX + dxfWidth / 2) * newScale,
-    // En Canvas, Y crece hacia abajo, en DXF hacia arriba. 
-    // Usamos el centro y sumamos porque el dibujo está invertido
-    y: (canvas.height / 2) + (minY + dxfHeight / 2) * newScale 
-  });
-
-}, [dxfRaw]);
+    setOffset({
+      x: (canvas.width / 2) - (minX + dxfWidth / 2) * newScale,
+      y: (canvas.height / 2) + (minY + dxfHeight / 2) * newScale 
+    });
+  }, [dxfRaw]);
 
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
@@ -55,107 +46,114 @@ useEffect(() => {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // Funciones de conversión coherentes para todas las entidades
     const dX = (x) => x * scale + offset.x;
     const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
 
     dxfRaw.entities.forEach(ent => {
       try {
-        // Estilo para el marco y líneas
-        ctx.lineWidth = ent.type === 'LWPOLYLINE' ? 2 : 1.2; 
         ctx.strokeStyle = "#2c3e50";
+        ctx.lineWidth = 1.2;
 
+        // --- DIBUJO DE LÍNEAS ---
         if (ent.type === 'LINE' && ent.start && ent.end) {
           ctx.beginPath();
           ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
           ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
           ctx.stroke();
         } 
+        // --- DIBUJO DE POLILÍNEAS ---
         else if (ent.vertices && ent.vertices.length > 1) {
           ctx.beginPath();
           ent.vertices.forEach((v, i) => {
             if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
             else ctx.lineTo(dX(v.x), dY(v.y));
           });
-          if (ent.shape) ctx.closePath(); // Cierra el rectángulo del marco
+          if (ent.shape) ctx.closePath();
           ctx.stroke();
         }
-else if (ent.type === 'CIRCLE' && ent.center) {
-  ctx.beginPath();
-  // IMPORTANTE: Si tus líneas usan dX y dY, los arcos DEBEN usar lo mismo
-  // Pero el radio DEBE multiplicarse por la escala manualmente si dX/dY no lo hacen
-  ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, 0, 2 * Math.PI);
-  ctx.stroke();
-} 
-else if (ent.type === 'ARC' && ent.center) {
-  ctx.beginPath();
-  
-  // 1. Ángulos (ajustados para la inversión de eje Y del canvas)
-  const startRad = (360 - ent.endAngle) * Math.PI / 180;
-  const endRad = (360 - ent.startAngle) * Math.PI / 180;
-
-  // 2. Dibujo
-  ctx.arc(
-    dX(ent.center.x),    // Misma función que usas para LINE
-    dY(ent.center.y),    // Misma función que usas para LINE
-    ent.radius * scale,  // El radio escalado
-    startRad, 
-    endRad, 
-    false                // Sentido horario
-  );
-  
-  ctx.stroke();
-}
+        // --- DIBUJO DE CÍRCULOS ---
+        else if (ent.type === 'CIRCLE' && ent.center) {
+          ctx.beginPath();
+          ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, 0, 2 * Math.PI);
+          ctx.stroke();
+        } 
+        // --- DIBUJO DE ARCOS ---
+        else if (ent.type === 'ARC' && ent.center) {
+          ctx.beginPath();
+          const startRad = (360 - ent.endAngle) * Math.PI / 180;
+          const endRad = (360 - ent.startAngle) * Math.PI / 180;
+          ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, startRad, endRad, false);
+          ctx.stroke();
+        }
+        // --- DIBUJO DE TEXTO (CORREGIDO) ---
         else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-          const p = ent.start || ent.position;
-          if (p && Math.abs(p.x) > 1) {
-            const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
+          // Buscamos la posición en 'position' o 'insert' (depende del parser y tipo)
+          const p = ent.position || ent.insert; 
+          
+          if (p) {
+            // Limpieza de formato MTEXT (quita códigos como \P, { }, etc.)
+            let txt = (ent.text || ent.string || "");
+            txt = txt.replace(/\{.*?\}/g, "")
+                     .replace(/\\P/g, " ")
+                     .replace(/\^I/g, " ")
+                     .replace(/\\[a-zA-Z].*?;/g, "") // Quita formatos de fuente de MTEXT
+                     .trim();
+
             if (txt && txt !== "0") {
-              ctx.fillStyle = "#e67e22";
-              ctx.font = `bold ${Math.max(10, (ent.height || 2.5) * scale)}px Arial`;
+              ctx.fillStyle = "#d35400"; // Naranja oscuro para que resalte
+              // Escalamos el tamaño de fuente con el zoom, pero ponemos un mínimo para legibilidad
+              const fontSize = Math.max(8, (ent.height || 2.5) * scale);
+              ctx.font = `bold ${fontSize}px Arial`;
+              
+              // dY(p.y) posiciona el texto en la coordenada correcta
               ctx.fillText(txt, dX(p.x), dY(p.y));
             }
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error("Error en entidad:", ent.type, e);
+      }
     });
   }, [dxfRaw, scale, offset]);
 
-  // Handlers de Mouse (Zoom y Pan)
-const handleWheel = (e) => {
+  // Handlers de Mouse (Zoom y Pan) permanecen iguales
+  const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 400);
     const rect = canvasRef.current.getBoundingClientRect();
     const mX = e.clientX - rect.left;
     const mY = e.clientY - rect.top;
-    setOffset(prev => ({ x: mX - (mX - prev.x) * factor, y: mY - (mY - prev.y) * factor }));
+    
+    // Aplicamos el zoom manteniendo el punto bajo el mouse fijo
+    setOffset(prev => ({ 
+      x: mX - (mX - prev.x) * factor, 
+      y: mY - (mY - prev.y) * factor 
+    }));
     setScale(s => s * factor);
   };
 
-  const handleMouseDown = (e) => {
-    setIsDragging(true);
-    setLastMousePos({ x: e.clientX, y: e.clientY });
-  };
-
-  const handleMouseMove = (e) => {
-    if (!isDragging) return;
-    setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
-    setLastMousePos({ x: e.clientX, y: e.clientY });
-  };
-  
-
-return (
+  return (
     <div style={{ border: '1px solid #333', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
       <canvas 
-        ref={canvasRef} width={2400} height={1200} 
+        ref={canvasRef} 
+        width={2400} 
+        height={1200} 
         onWheel={handleWheel}
-        onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
+        onMouseDown={(e) => { 
+          setIsDragging(true); 
+          setLastMousePos({ x: e.clientX, y: e.clientY }); 
+        }}
         onMouseMove={(e) => {
           if (!isDragging) return;
-          setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
+          const dx = e.clientX - lastMousePos.x;
+          const dy = e.clientY - lastMousePos.y;
+          setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
           setLastMousePos({ x: e.clientX, y: e.clientY });
         }}
         onMouseUp={() => setIsDragging(false)}
-        style={{ width: '100%', height: '750px', cursor: 'grab' }} 
+        onMouseLeave={() => setIsDragging(false)}
+        style={{ width: '100%', height: '750px', cursor: isDragging ? 'grabbing' : 'grab' }} 
       />
     </div>
   );
