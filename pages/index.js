@@ -79,33 +79,33 @@ useEffect(() => {
           if (ent.shape) ctx.closePath(); // Cierra el rectángulo del marco
           ctx.stroke();
         }
-        else if (ent.type === 'CIRCLE' && ent.center) {
-        ctx.beginPath();
-        // En un círculo completo, los ángulos no importan (0 a 2*PI)
-        ctx.arc(ent.center.x, ent.center.y, ent.radius, 0, 2 * Math.PI);
-        ctx.stroke();
-      } 
-      else if (ent.type === 'ARC' && ent.center) {
-        ctx.beginPath();
+else if (ent.type === 'CIRCLE' && ent.center) {
+  ctx.beginPath();
+  // No multiplicar por scale, no usar dX/dY. Usar coordenadas puras del DXF.
+  ctx.arc(ent.center.x, ent.center.y, ent.radius, 0, 2 * Math.PI);
+  ctx.stroke();
+} 
+else if (ent.type === 'ARC' && ent.center) {
+  ctx.beginPath();
   
-        // 1. Convertir grados a radianes (Sin restar de 360)
-        const startRad = ent.startAngle * Math.PI / 180;
-        const endRad = ent.endAngle * Math.PI / 180;
+  // 1. Ángulos directos en radianes
+  const startRad = ent.startAngle * Math.PI / 180;
+  const endRad = ent.endAngle * Math.PI / 180;
 
-        // 2. Dibujar el arco
-        // IMPORTANTE: Usamos -startRad y -endRad porque el eje Y está invertido (scale 1, -1)
-        // El último parámetro 'true' es vital para que siga la dirección del DXF
-        ctx.arc(
-          ent.center.x, 
-          ent.center.y, 
-          ent.radius, 
-          -startRad, 
-          -endRad, 
-          true
-        );
+  // 2. Dibujo del arco
+  // Usamos -startRad y -endRad porque el eje Y está invertido globalmente
+  // El parámetro 'true' hace que el arco recorra el camino correcto en un eje invertido
+  ctx.arc(
+    ent.center.x, 
+    ent.center.y, 
+    ent.radius, 
+    -startRad, 
+    -endRad, 
+    true
+  );
   
-        ctx.stroke();
-      }
+  ctx.stroke();
+}
         else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
           const p = ent.start || ent.position;
           if (p && Math.abs(p.x) > 1) {
