@@ -12,112 +12,86 @@ function DxfCanvas({ dxfRaw }) {
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
 useEffect(() => {
-  if (!dxfRaw || !canvasRef.current) return;
-  const canvas = canvasRef.current;
-  const ctx = canvas.getContext("2d");
+    if (!dxfRaw || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    
+    // Límites según tu archivo 700176.dxf
+    const minX = 1413.27, maxX = 2047.99;
+    const minY = 481.35, maxY = 777.74;
 
-  // 1. Límites exactos del dibujo (según tu archivo 700176.dxf)
-  const minX = 1413.27;
-  const maxX = 2047.99;
-  const minY = 481.35;
-  const maxY = 777.74;
+    const dxfWidth = maxX - minX;
+    const dxfHeight = maxY - minY;
+    const padding = 40;
 
-  const dxfWidth = maxX - minX;
-  const dxfHeight = maxY - minY;
+    const scaleX = (canvas.width - padding * 2) / dxfWidth;
+    const scaleY = (canvas.height - padding * 2) / dxfHeight;
+    const newScale = Math.min(scaleX, scaleY);
 
-  // 2. Definir un margen (p.ej. 10% del espacio)
-  const padding = 40;
-  const availableWidth = canvas.width - padding * 2;
-  const availableHeight = canvas.height - padding * 2;
+    setScale(newScale);
+    setOffset({
+      x: (canvas.width / 2) - (minX + dxfWidth / 2) * newScale,
+      // Inversión para centrar en el eje Y del canvas
+      y: (canvas.height / 2) + (minY + dxfHeight / 2) * newScale 
+    });
+  }, [dxfRaw]);
 
-  // 3. Calcular escala para que quepa en ancho O alto (lo que sea más restrictivo)
-  const scaleX = availableWidth / dxfWidth;
-  const scaleY = availableHeight / dxfHeight;
-  const newScale = Math.min(scaleX, scaleY);
-
-  setScale(newScale);
-
-  // 4. Centrar el dibujo
-  // El centro del DXF es (minX + dxfWidth / 2)
-  // Queremos que ese punto coincida con el centro del canvas (canvas.width / 2)
-  setOffset({
-    x: (canvas.width / 2) - (minX + dxfWidth / 2) * newScale,
-    // En Canvas, Y crece hacia abajo, en DXF hacia arriba. 
-    // Usamos el centro y sumamos porque el dibujo está invertido
-    y: (canvas.height / 2) + (minY + dxfHeight / 2) * newScale 
-  });
-
-}, [dxfRaw]);
-
-  useEffect(() => {
+useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const dX = (x) => x * scale + offset.x;
-    const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
+    ctx.save();
+    // 1. Aplicamos la transformación GLOBAL (esto mueve y escala TODO)
+    ctx.translate(offset.x, offset.y);
+    ctx.scale(scale, -scale); // Escala positiva en X, negativa en Y para corregir orientación DXF
 
-    dxfRaw.entities.forEach(ent => {
-      try {
-        // Estilo para el marco y líneas
-        ctx.lineWidth = ent.type === 'LWPOLYLINE' ? 2 : 1.2; 
-        ctx.strokeStyle = "#2c3e50";
+    dxfRaw.entities.forEach((ent) => {
+      ctx.beginPath();
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 1 / scale; // Mantiene el grosor de línea constante sin importar el zoom
 
-        if (ent.type === 'LINE' && ent.start && ent.end) {
-          ctx.beginPath();
-          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
-          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
-          ctx.stroke();
-        } 
-        else if (ent.vertices && ent.vertices.length > 1) {
-          ctx.beginPath();
-          ent.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
-            else ctx.lineTo(dX(v.x), dY(v.y));
-          });
-          if (ent.shape) ctx.closePath(); // Cierra el rectángulo del marco
-          ctx.stroke();
-        }
-else if (ent.type === 'CIRCLE' && ent.center) {
-  ctx.beginPath();
-  // IMPORTANTE: Si tus líneas usan dX y dY, los arcos DEBEN usar lo mismo
-  // Pero el radio DEBE multiplicarse por la escala manualmente si dX/dY no lo hacen
-  ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, 0, 2 * Math.PI);
-  ctx.stroke();
-} 
-else if (ent.type === 'ARC' && ent.center) {
-  ctx.beginPath();
-  
-  // 1. Ángulos (ajustados para la inversión de eje Y del canvas)
-  const startRad = (360 - ent.endAngle) * Math.PI / 180;
-  const endRad = (360 - ent.startAngle) * Math.PI / 180;
-
-  // 2. Dibujo
-  ctx.arc(
-    dX(ent.center.x),    // Misma función que usas para LINE
-    dY(ent.center.y),    // Misma función que usas para LINE
-    ent.radius * scale,  // El radio escalado
-    startRad, 
-    endRad, 
-    false                // Sentido horario
-  );
-  
-  ctx.stroke();
-}
-        else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-          const p = ent.start || ent.position;
-          if (p && Math.abs(p.x) > 1) {
-            const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").trim();
-            if (txt && txt !== "0") {
-              ctx.fillStyle = "#e67e22";
-              ctx.font = `bold ${Math.max(10, (ent.height || 2.5) * scale)}px Arial`;
-              ctx.fillText(txt, dX(p.x), dY(p.y));
-            }
-          }
-        }
-      } catch (e) {}
+      if (ent.type === "LINE") {
+        ctx.moveTo(ent.vertices[0].x, ent.vertices[0].y);
+        ctx.lineTo(ent.vertices[1].x, ent.vertices[1].y);
+        ctx.stroke();
+      } 
+      else if (ent.type === "CIRCLE") {
+        ctx.arc(ent.center.x, ent.center.y, ent.radius, 0, 2 * Math.PI);
+        ctx.stroke();
+      } 
+      else if (ent.type === "ARC") {
+        // En DXF los ángulos son antihorarios. Con scale(1, -1), el sentido se invierte.
+        const startRad = ent.startAngle * Math.PI / 180;
+        const endRad = ent.endAngle * Math.PI / 180;
+        // Invertimos el signo de los ángulos y usamos 'true' para sentido antihorario corregido
+        ctx.arc(ent.center.x, ent.center.y, ent.radius, -startRad, -endRad, true);
+        ctx.stroke();
+      }
+      else if (ent.type === "LWPOLYLINE") {
+        ent.vertices.forEach((v, i) => {
+          if (i === 0) ctx.moveTo(v.x, v.y);
+          else ctx.lineTo(v.x, v.y);
+        });
+        if (ent.shape) ctx.closePath();
+        ctx.stroke();
+      }
+      else if (ent.type === "TEXT" || ent.type === "MTEXT") {
+        ctx.save();
+        // El texto NO debe estar invertido, así que deshacemos el scale -1 de Y para él
+        const posX = ent.columnUintHeight ? ent.insert.x : ent.position.x;
+        const posY = ent.columnUintHeight ? ent.insert.y : ent.position.y;
+        ctx.translate(posX, posY);
+        ctx.scale(1, -1); 
+        
+        ctx.font = `${(ent.height || 12)}px sans-serif`;
+        ctx.fillStyle = "blue"; // Color diferente para distinguir etiquetas
+        ctx.fillText(ent.text || "", 0, 0);
+        ctx.restore();
+      }
     });
+  
+  ctx.restore();
   }, [dxfRaw, scale, offset]);
 
   // Handlers de Mouse (Zoom y Pan)
