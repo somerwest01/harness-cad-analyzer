@@ -89,20 +89,18 @@ else if (ent.type === 'CIRCLE' && ent.center) {
 else if (ent.type === 'ARC' && ent.center) {
   ctx.beginPath();
   
-  // 1. Convertimos a radianes
-  const startRad = ent.startAngle * Math.PI / 180;
-  const endRad = ent.endAngle * Math.PI / 180;
+  // 1. Ángulos (ajustados para la inversión de eje Y del canvas)
+  const startRad = (360 - ent.endAngle) * Math.PI / 180;
+  const endRad = (360 - ent.startAngle) * Math.PI / 180;
 
-  // 2. Dibujamos el arco
-  // Si tus líneas se mueven bien, este arco SE MOVERÁ BIEN siempre que esté
-  // dentro del bloque ctx.save() ... ctx.restore()
+  // 2. Dibujo
   ctx.arc(
-    ent.center.x, 
-    ent.center.y, 
-    ent.radius, 
-    -startRad, 
-    -endRad, 
-    true // <-- Esto evita que se convierta en un círculo completo
+    dX(ent.center.x),    // Misma función que usas para LINE
+    dY(ent.center.y),    // Misma función que usas para LINE
+    ent.radius * scale,  // El radio escalado
+    startRad, 
+    endRad, 
+    false                // Sentido horario
   );
   
   ctx.stroke();
