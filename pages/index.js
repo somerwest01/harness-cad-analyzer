@@ -11,54 +11,43 @@ function DxfCanvas({ dxfRaw }) {
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
-  useEffect(() => {
-    if (!dxfRaw || !dxfRaw.entities || !canvasRef.current) return;
-    const canvas = canvasRef.current;
-    
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+useEffect(() => {
+  if (!dxfRaw || !canvasRef.current) return;
+  const canvas = canvasRef.current;
+  const ctx = canvas.getContext("2d");
 
-    // 1. ENCONTRAR EL MARCO (El rectángulo que envuelve todo)
-    dxfRaw.entities.forEach(ent => {
-      const checkPoint = (p) => {
-        if (p && typeof p.x === 'number') {
-          // Ignoramos el 0,0 absoluto
-          if (Math.abs(p.x) < 1 && Math.abs(p.y) < 1) return;
-          minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-          maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-        }
-      };
+  // 1. Límites exactos del dibujo (según tu archivo 700176.dxf)
+  const minX = 1413.27;
+  const maxX = 2047.99;
+  const minY = 481.35;
+  const maxY = 777.74;
 
-      if (ent.vertices) ent.vertices.forEach(checkPoint);
-      if (ent.start) { checkPoint(ent.start); checkPoint(ent.end); }
-      if (ent.center) checkPoint(ent.center);
-      if (ent.position) checkPoint(ent.position);
-    });
+  const dxfWidth = maxX - minX;
+  const dxfHeight = maxY - minY;
 
-    if (minX === Infinity) return;
+  // 2. Definir un margen (p.ej. 10% del espacio)
+  const padding = 40;
+  const availableWidth = canvas.width - padding * 2;
+  const availableHeight = canvas.height - padding * 2;
 
-    // 2. CÁLCULO DE DIMENSIONES DEL MARCO
-    const drawingWidth = maxX - minX;
-    const drawingHeight = maxY - minY;
+  // 3. Calcular escala para que quepa en ancho O alto (lo que sea más restrictivo)
+  const scaleX = availableWidth / dxfWidth;
+  const scaleY = availableHeight / dxfHeight;
+  const newScale = Math.min(scaleX, scaleY);
 
-    // Añadimos un margen de seguridad (Padding) del 5% para que NO se corte a la izquierda
-    const padding = 40; 
-    const availableWidth = canvas.width - (padding * 2);
-    const availableHeight = canvas.height - (padding * 2);
+  setScale(newScale);
 
-    const initialScale = Math.min(
-      availableWidth / (drawingWidth || 1), 
-      availableHeight / (drawingHeight || 1)
-    );
+  // 4. Centrar el dibujo
+  // El centro del DXF es (minX + dxfWidth / 2)
+  // Queremos que ese punto coincida con el centro del canvas (canvas.width / 2)
+  setOffset({
+    x: (canvas.width / 2) - (minX + dxfWidth / 2) * newScale,
+    // En Canvas, Y crece hacia abajo, en DXF hacia arriba. 
+    // Usamos el centro y sumamos porque el dibujo está invertido
+    y: (canvas.height / 2) + (minY + dxfHeight / 2) * newScale 
+  });
 
-    setScale(initialScale);
-
-    // 3. CENTRADO CON CORRECCIÓN DE IZQUIERDA
-    // Sumamos el 'padding' a la X inicial para asegurar que el borde izquierdo sea visible
-    setOffset({
-      x: (canvas.width / 2) - (minX + drawingWidth / 2) * initialScale,
-      y: (canvas.height / 2) + (minY + drawingHeight / 2) * initialScale
-    });
-  }, [dxfRaw]);
+}, [dxfRaw]);
 
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
