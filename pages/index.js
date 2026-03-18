@@ -14,7 +14,8 @@ function DxfCanvas({ dxfRaw }) {
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
-
+    
+    // Límites para centrado inicial (mantener igual)
     const minX = 1413.27;
     const maxX = 2047.99;
     const minY = 481.35;
@@ -49,16 +50,16 @@ function DxfCanvas({ dxfRaw }) {
     dxfRaw.entities.forEach(ent => {
       try {
         ctx.lineWidth = 1.2;
-        ctx.strokeStyle = "#2c3e50";
+        ctx.strokeStyle = "#2c3e50"; // Color de líneas
 
-        // LINEAS
+        // --- LINEAS, POLILINEAS, CIRCULOS, ARCOS ---
+        // (Mantener esta lógica igual, ya que funciona bien)
         if (ent.type === 'LINE' && ent.start && ent.end) {
           ctx.beginPath();
           ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
           ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
           ctx.stroke();
         } 
-        // POLILINEAS
         else if (ent.vertices && ent.vertices.length > 1) {
           ctx.beginPath();
           ent.vertices.forEach((v, i) => {
@@ -68,13 +69,11 @@ function DxfCanvas({ dxfRaw }) {
           if (ent.shape) ctx.closePath();
           ctx.stroke();
         }
-        // CIRCULOS
         else if (ent.type === 'CIRCLE' && ent.center) {
           ctx.beginPath();
           ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, 0, 2 * Math.PI);
           ctx.stroke();
         } 
-        // ARCOS
         else if (ent.type === 'ARC' && ent.center) {
           ctx.beginPath();
           const startRad = (360 - ent.endAngle) * Math.PI / 180;
@@ -82,38 +81,36 @@ function DxfCanvas({ dxfRaw }) {
           ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, startRad, endRad, false);
           ctx.stroke();
         }
-        // --- TEXTO CORREGIDO ---
+        // --- TEXTO CORREGIDO (Color, Tamaño, Sin Punto) ---
         else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
-          // Intentar obtener la posición de varias formas posibles según el parser
           const p = ent.position || ent.startPoint || ent.insert;
           
           if (p) {
-            // Limpiamos el texto de códigos de formato de AutoCAD
             let txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").replace(/\\[a-zA-Z].*?;/g, "").trim();
             
             if (txt && txt !== "0") {
-              // FORZAMOS COLOR ROJO PARA PRUEBA
-              ctx.fillStyle = "#FF0000"; 
+              // 1. CAMBIO DE COLOR A NEGRO
+              ctx.fillStyle = "#000000"; 
               
-              // Forzamos un tamaño mínimo de 15px para que se vea sí o sí
-              const fontSize = Math.max(15, (ent.height || 5) * scale);
-              ctx.font = `bold ${fontSize}px Arial`;
+              // 2. CAMBIO DE TAMAÑO (Reducido de Math.max(15,...) a Math.max(10,...))
+              // y reducido el multiplicador de altura de (ent.height || 5) a (ent.height || 3.5)
+              const fontSize = Math.max(10, (ent.height || 3.5) * scale);
+              ctx.font = `normal ${fontSize}px Arial`; // También cambié 'bold' a 'normal' para que se vea más limpio al ser pequeño
               
               // Dibujamos el texto
               ctx.fillText(txt, dX(p.x), dY(p.y));
               
-              // DEBUG: Opcional, dibuja un puntito donde debería estar el texto
-              ctx.fillRect(dX(p.x), dY(p.y), 2, 2);
+              // --- 3. SOLUCIÓN AL PUNTO MISTERIOSO ---
+              // He eliminado la línea: ctx.fillRect(dX(p.x), dY(p.y), 2, 2);
+              // que era la que dibujaba ese puntito rojo de debug.
             }
           }
         }
-      } catch (e) {
-        console.error("Error en entidad:", ent);
-      }
+      } catch (e) {}
     });
   }, [dxfRaw, scale, offset]);
 
-  // Handlers de Mouse (Zoom y Pan)
+  // Handlers de Mouse (Zoom y Pan) permanecen iguales...
   const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 400);
@@ -127,14 +124,9 @@ function DxfCanvas({ dxfRaw }) {
   return (
     <div style={{ border: '1px solid #333', borderRadius: '8px', overflow: 'hidden', background: '#fff' }}>
       <canvas 
-        ref={canvasRef} 
-        width={2400} 
-        height={1200} 
+        ref={canvasRef} width={2400} height={1200} 
         onWheel={handleWheel}
-        onMouseDown={(e) => { 
-          setIsDragging(true); 
-          setLastMousePos({ x: e.clientX, y: e.clientY }); 
-        }}
+        onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
         onMouseMove={(e) => {
           if (!isDragging) return;
           const dx = e.clientX - lastMousePos.x;
