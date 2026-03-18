@@ -89,18 +89,21 @@ else if (ent.type === 'CIRCLE' && ent.center) {
 else if (ent.type === 'ARC' && ent.center) {
   ctx.beginPath();
   
-  // 1. Ángulos (ajustados para la inversión de eje Y del canvas)
-  const startRad = (360 - ent.endAngle) * Math.PI / 180;
-  const endRad = (360 - ent.startAngle) * Math.PI / 180;
+  // 1. Convertir ángulos de grados a radianes
+  const startRad = ent.startAngle * Math.PI / 180;
+  const endRad = ent.endAngle * Math.PI / 180;
 
-  // 2. Dibujo
+  // 2. Dibujar el arco
+  // Usamos -startRad y -endRad porque tu eje Y está invertido globalmente.
+  // El último parámetro 'true' es CRUCIAL: le dice al canvas que 
+  // dibuje el camino "corto" en sentido antihorario.
   ctx.arc(
-    dX(ent.center.x),    // Misma función que usas para LINE
-    dY(ent.center.y),    // Misma función que usas para LINE
-    ent.radius * scale,  // El radio escalado
-    startRad, 
-    endRad, 
-    false                // Sentido horario
+    ent.center.x, 
+    ent.center.y, 
+    ent.radius, 
+    -startRad, 
+    -endRad, 
+    true 
   );
   
   ctx.stroke();
