@@ -3,7 +3,7 @@ import DxfParser from "dxf-parser";
 import * as XLSX from "xlsx";
 import styles from "./Home.module.css";
 
-// --- VISOR A: DIBUJO ORIGINAL ---
+// --- VISOR A: DIBUJO ORIGINAL (SIN CAMBIOS) ---
 function DxfCanvas({ dxfRaw }) {
   const canvasRef = useRef(null);
   const [scale, setScale] = useState(1);
@@ -41,32 +41,23 @@ function DxfCanvas({ dxfRaw }) {
         ctx.strokeStyle = "#2c3e50";
 
         if (ent.type === 'LINE' && ent.start && ent.end) {
-          ctx.beginPath();
-          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
-          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
-          ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(dX(ent.start.x), dY(ent.start.y)); ctx.lineTo(dX(ent.end.x), dY(ent.end.y)); ctx.stroke();
         } 
         else if ((ent.type === 'LWPOLYLINE' || ent.vertices) && ent.vertices?.length > 0) {
           ctx.beginPath();
-          ent.vertices.forEach((v, i) => {
-            if (v) i === 0 ? ctx.moveTo(dX(v.x), dY(v.y)) : ctx.lineTo(dX(v.x), dY(v.y));
-          });
+          ent.vertices.forEach((v, i) => { if (v) i === 0 ? ctx.moveTo(dX(v.x), dY(v.y)) : ctx.lineTo(dX(v.x), dY(v.y)); });
           if (ent.shape || ent.closed) ctx.closePath();
           ctx.stroke();
         } 
         else if (ent.type === 'CIRCLE' && ent.center) {
-          ctx.beginPath();
-          ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
-          ctx.stroke();
+          ctx.beginPath(); ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI); ctx.stroke();
         } 
         else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
           const p = ent.position || ent.startPoint || ent.insert;
           if (p) {
             let txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\[a-zA-Z].*?;/g, "").trim();
             if (txt && txt !== "0") {
-              ctx.fillStyle = "#000";
-              ctx.font = `${Math.max(10, (ent.height || 3.5) * scale)}px Arial`;
-              ctx.fillText(txt, dX(p.x), dY(p.y));
+              ctx.fillStyle = "#000"; ctx.font = `${Math.max(10, (ent.height || 3.5) * scale)}px Arial`; ctx.fillText(txt, dX(p.x), dY(p.y));
             }
           }
         }
@@ -102,15 +93,16 @@ function DxfCanvas({ dxfRaw }) {
   );
 }
 
-// --- VISOR B: PLANO ESTANDARIZADO (CON ZOOM Y PAN) ---
+// --- VISOR B: PLANO ESTANDARIZADO (CON HOVER SELECCIONABLE) ---
 function StandardCanvas({ connectors }) {
   const canvasRef = useRef(null);
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
+  const [hoveredConnector, setHoveredConnector] = useState(null); // Estado para el conector bajo el mouse
 
-  // Encuadre inicial automático
+  // Encuadre inicial automático (igual que antes)
   useEffect(() => {
     if (!connectors || connectors.length === 0 || !canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -119,7 +111,6 @@ function StandardCanvas({ connectors }) {
     const dxfHeight = maxY - minY;
     const padding = 60;
     const newScale = Math.min((canvas.width - padding * 2) / dxfWidth, (canvas.height - padding * 2) / dxfHeight);
-
     setScale(newScale || 1);
     setOffset({
       x: (canvas.width / 2) - (minX + dxfWidth / 2) * (newScale || 1),
@@ -127,6 +118,7 @@ function StandardCanvas({ connectors }) {
     });
   }, [connectors]);
 
+  // Motor de dibujo actualizado para manejar el resaltado
   useEffect(() => {
     if (!canvasRef.current || !connectors) return;
     const ctx = canvasRef.current.getContext("2d");
@@ -137,9 +129,13 @@ function StandardCanvas({ connectors }) {
 
     connectors.forEach(conn => {
       try {
-        // Dibujar geometría original en gris suave
-        ctx.strokeStyle = "#d1d5db";
-        ctx.lineWidth = 1;
+        const isHovered = conn.name === hoveredConnector;
+        
+        // --- 1. DIBUJAR GEOMETRÍA ORIGINAL AGRUPADA ---
+        // Si está hovered, pintamos de rojo brillante; si no, gris suave.
+        ctx.strokeStyle = isHovered ? "#e74c3c" : "#bdc3c7"; 
+        ctx.lineWidth = isHovered ? 2.5 : 1.2;
+        
         conn.entities?.forEach(ent => {
           if (ent.type === 'LINE' && ent.start && ent.end) {
             ctx.beginPath();
@@ -155,24 +151,23 @@ function StandardCanvas({ connectors }) {
           }
         });
 
-        // Dibujar Burbuja Azul (Normalizada)
-        ctx.beginPath();
-        ctx.arc(dX(conn.x), dY(conn.y), 15 * scale, 0, 2 * Math.PI);
-        ctx.fillStyle = "#3498db";
-        ctx.fill();
-        ctx.strokeStyle = "#2c3e50";
-        ctx.lineWidth = 2;
-        ctx.stroke();
+        // --- 2. ELIMINADO: Burbuja Azul ---
+        // (Ya no dibujamos el ctx.arc aquí)
 
-        // Texto Estandarizado
-        ctx.fillStyle = "#000";
-        ctx.font = `bold ${Math.max(12, 6 * scale)}px Arial`;
+        // --- 3. DIBUJAR TEXTO ESTANDARIZADO ---
+        // Resaltamos el texto también si está hovered
+        ctx.fillStyle = isHovered ? "#3498db" : "#000";
+        ctx.font = `bold ${Math.max(14, 7 * scale)}px Arial`;
         ctx.textAlign = "center";
-        ctx.fillText(conn.name || "?", dX(conn.x), dY(conn.y) - (25 * scale));
+        
+        // Posicionamos el texto ligeramente arriba de la geometría (usando el texto original como referencia de base)
+        ctx.fillText(conn.name || "?", dX(conn.x), dY(conn.y) - (20 * scale));
+        
       } catch (e) {}
     });
-  }, [connectors, scale, offset]);
+  }, [connectors, scale, offset, hoveredConnector]);
 
+  // Manejador de Wheel (Zoom)
   const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 400);
@@ -182,20 +177,49 @@ function StandardCanvas({ connectors }) {
     setScale(s => s * factor);
   };
 
+  // --- NUEVO: Motor de detección de colisiones (Hover) ---
+  const handleMouseMove = (e) => {
+    if (isDragging) {
+      setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
+      setLastMousePos({ x: e.clientX, y: e.clientY });
+      return;
+    }
+
+    // Calcular coordenadas del mouse en el mundo DXF
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mX = e.clientX - rect.left;
+    const mY = e.clientY - rect.top;
+    
+    // Invertimos la transformación del Canvas para obtener la coordenada DXF pura
+    const dxfMouseX = (mX - offset.x) / scale;
+    const dxfMouseY = (canvasRef.current.height - mY - offset.y) / scale;
+
+    // Buscamos si el mouse está dentro de la "caja" (Bounding Box) de algún conector
+    let foundConnector = null;
+    for (const conn of connectors) {
+      if (conn.bbox &&
+          dxfMouseX >= conn.bbox.minX && dxfMouseX <= conn.bbox.maxX &&
+          dxfMouseY >= conn.bbox.minY && dxfMouseY <= conn.bbox.maxY) {
+        foundConnector = conn.name;
+        break; // Tomamos el primero que encontremos
+      }
+    }
+
+    if (foundConnector !== hoveredConnector) {
+      setHoveredConnector(foundConnector);
+    }
+  };
+
   return (
     <div style={{ border: '2px solid #3498db', borderRadius: '8px', overflow: 'hidden', background: '#f8f9fa' }}>
       <canvas 
         ref={canvasRef} width={2400} height={1200} 
         onWheel={handleWheel}
         onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
-        onMouseMove={(e) => {
-          if (!isDragging) return;
-          setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
-          setLastMousePos({ x: e.clientX, y: e.clientY });
-        }}
+        onMouseMove={handleMouseMove} // Usamos el manejador actualizado
         onMouseUp={() => setIsDragging(false)}
-        onMouseLeave={() => setIsDragging(false)}
-        style={{ width: '100%', height: '500px', cursor: isDragging ? 'grabbing' : 'grab' }} 
+        onMouseLeave={() => { setIsDragging(false); setHoveredConnector(null); }} // Limpiamos hover al salir
+        style={{ width: '100%', height: '500px', cursor: isDragging ? 'grabbing' : (hoveredConnector ? 'pointer' : 'grab') }} 
       />
     </div>
   );
@@ -245,18 +269,44 @@ export default function Home() {
       const texts = dxf.entities.filter(ent => ent.type === "TEXT" || ent.type === "MTEXT");
       const lines = dxf.entities.filter(ent => ent.type === "LINE" || ent.type === "LWPOLYLINE");
 
+      // --- PASO 1: DETECCIÓN Y CLUSTERING (ACTUALIZADO CON BOUNDING BOX) ---
       const connectors = texts.map(t => {
         const name = (t.text || t.string || "").replace(/\{.*?\}/g, "").trim().toUpperCase();
         if (/^[J|P|C|A|S|B]/.test(name) && name.length >= 2) {
           const p = t.position || t.startPoint || t.insert;
           if (!p) return null;
+          
+          // Agrupar líneas en un radio de 80 unidades
           const cluster = lines.filter(l => {
             const lx = l.vertices?.[0]?.x ?? l.start?.x;
             const ly = l.vertices?.[0]?.y ?? l.start?.y;
             if (lx === undefined) return false;
             return Math.sqrt(Math.pow(p.x - lx, 2) + Math.pow(p.y - ly, 2)) < 80;
           });
-          if (cluster.length > 0) return { name, x: p.x, y: p.y, entities: cluster };
+
+          if (cluster.length > 0) {
+            // --- NUEVO: Calcular la Caja de Límites (Bounding Box) del clúster ---
+            // Esto es vital para detectar el hover.
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            cluster.forEach(ent => {
+              if (ent.type === 'LINE') {
+                minX = Math.min(minX, ent.start.x, ent.end.x);
+                maxX = Math.max(maxX, ent.start.x, ent.end.x);
+                minY = Math.min(minY, ent.start.y, ent.end.y);
+                maxY = Math.max(maxY, ent.start.y, ent.end.y);
+              } else if (ent.vertices) {
+                ent.vertices.forEach(v => {
+                  minX = Math.min(minX, v.x);
+                  maxX = Math.max(maxX, v.x);
+                  minY = Math.min(minY, v.y);
+                  maxY = Math.max(maxY, v.y);
+                });
+              }
+            });
+
+            // Retornamos el objeto Smart con su caja de límites
+            return { name, x: p.x, y: p.y, entities: cluster, bbox: { minX, maxX, minY, maxY } };
+          }
         }
         return null;
       }).filter(Boolean);
@@ -316,7 +366,7 @@ export default function Home() {
             <DxfCanvas dxfRaw={dxfData.raw} />
           </div>
           <div className={styles.tableContainer}>
-            <div className={styles.collapsibleHeader} style={{ backgroundColor: '#3498db' }}><span>⚡ Vista B: Estandarizada</span></div>
+            <div className={styles.collapsibleHeader} style={{ backgroundColor: '#3498db' }}><span>⚡ Vista B: Estandarizada (Pasar cursor para resaltar)</span></div>
             <StandardCanvas connectors={detectedConnectors} />
           </div>
         </div>
