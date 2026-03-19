@@ -3,7 +3,7 @@ import DxfParser from "dxf-parser";
 import * as XLSX from "xlsx";
 import styles from "./Home.module.css";
 
-// --- VISOR A: DIBUJO ORIGINAL (REFERENCIA) ---
+// --- VISOR A: DIBUJO ORIGINAL (CON SOPORTE COMPLETO DE LÍNEAS) ---
 function DxfCanvas({ dxfRaw }) {
   const canvasRef = useRef(null);
   const [scale, setScale] = useState(1);
@@ -15,7 +15,7 @@ function DxfCanvas({ dxfRaw }) {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
     
-    // Límites base para el encuadre inicial
+    // Encuadre automático basado en los límites conocidos del arnés
     const minX = 1413.27, maxX = 2047.99;
     const minY = 481.35, maxY = 777.74;
 
@@ -39,19 +39,19 @@ function DxfCanvas({ dxfRaw }) {
     const dX = (x) => x * scale + offset.x;
     const dY = (y) => canvasRef.current.height - (y * scale + (canvasRef.current.height - offset.y));
 
-dxfRaw.entities.forEach(ent => {
+    dxfRaw.entities.forEach(ent => {
       try {
         ctx.lineWidth = 1.2;
         ctx.strokeStyle = "#2c3e50";
 
-        // DIBUJAR LÍNEAS SIMPLES
+        // 1. LÍNEAS SIMPLES
         if (ent.type === 'LINE') {
           ctx.beginPath();
           ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
           ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
           ctx.stroke();
         } 
-        // DIBUJAR POLILÍNEAS (ESTO ES LO QUE FALTABA)
+        // 2. POLILÍNEAS (LWPOLYLINE) - Crucial para ver los ramales y conectores
         else if (ent.type === 'LWPOLYLINE' || (ent.vertices && ent.vertices.length > 1)) {
           ctx.beginPath();
           ent.vertices.forEach((v, i) => {
@@ -61,13 +61,13 @@ dxfRaw.entities.forEach(ent => {
           if (ent.shape || ent.closed) ctx.closePath();
           ctx.stroke();
         } 
-        // DIBUJAR CÍRCULOS
+        // 3. CÍRCULOS
         else if (ent.type === 'CIRCLE') {
           ctx.beginPath();
           ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, 0, 2 * Math.PI);
           ctx.stroke();
         } 
-        // DIBUJAR TEXTOS
+        // 4. TEXTOS
         else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
           const p = ent.position || ent.startPoint || ent.insert;
           if (p) {
@@ -79,7 +79,7 @@ dxfRaw.entities.forEach(ent => {
             }
           }
         }
-      } catch (e) { console.error("Error en entidad:", e); }
+      } catch (e) {}
     });
   }, [dxfRaw, scale, offset]);
 
@@ -110,7 +110,7 @@ dxfRaw.entities.forEach(ent => {
   );
 }
 
-// --- VISOR B: PLANO ESTANDARIZADO (PLAN B) ---
+// --- VISOR B: PLANO ESTANDARIZADO (RECONSTRUCCIÓN LIMPIA) ---
 function StandardCanvas({ connectors, scale, offset }) {
   const canvasRef = useRef(null);
 
@@ -123,7 +123,8 @@ function StandardCanvas({ connectors, scale, offset }) {
     const dY = (y) => canvasRef.current.height - (y * scale + (canvasRef.current.height - offset.y));
 
     connectors.forEach(conn => {
-      ctx.strokeStyle = "#bdc3c7"; 
+      // 1. Dibujar líneas originales agrupadas para referencia visual
+      ctx.strokeStyle = "#d1d5db"; // Gris claro
       ctx.lineWidth = 1;
       conn.entities.forEach(ent => {
         if (ent.type === 'LINE') {
@@ -137,7 +138,8 @@ function StandardCanvas({ connectors, scale, offset }) {
           ctx.stroke();
         }
       });
-      // Dibujo de conector tipo "Burbuja" azul
+
+      // 2. Dibujar el "Objeto Inteligente" (Círculo azul)
       ctx.beginPath();
       ctx.arc(dX(conn.x), dY(conn.y), 15 * scale, 0, 2 * Math.PI);
       ctx.fillStyle = "#3498db";
@@ -146,11 +148,11 @@ function StandardCanvas({ connectors, scale, offset }) {
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // Texto limpio arriba del conector
+      // 3. Etiqueta normalizada
       ctx.fillStyle = "#000";
       ctx.font = `bold ${Math.max(12, 6 * scale)}px Arial`;
       ctx.textAlign = "center";
-      ctx.fillText(conn.name, dX(conn.x), dY(conn.y) - (20 * scale));
+      ctx.fillText(conn.name, dX(conn.x), dY(conn.y) - (22 * scale));
     });
   }, [connectors, scale, offset]);
 
@@ -167,7 +169,6 @@ export default function Home() {
   const [detectedConnectors, setDetectedConnectors] = useState([]);
   const [partNumber, setPartNumber] = useState("");
   const [isTableVisible, setIsTableVisible] = useState(true);
-  const [isCanvasVisible, setIsCanvasVisible] = useState(true);
 
   const handleExcel = (e) => {
     const file = e.target.files[0];
@@ -179,11 +180,13 @@ export default function Home() {
         const wb = XLSX.read(bstr, { type: "binary" });
         const ws = wb.Sheets[wb.SheetNames[0]];
         let raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-        setPartNumber(raw[3] ? String(raw[3][0]) : "Desconocido");
         
+        setPartNumber(raw[3] ? String(raw[3][0]) : "Desconocido");
         const colsDel = [2, 4, 7, 9, 12, 18, 19, 20];
         const filter = (r) => r.filter((_, i) => !colsDel.includes(i));
-        const headers = filter(raw[4] || []).map((_, i) => `${filter(raw[4])[i]} ${filter(raw[5])[i]} ${filter(raw[6])[i]}`.trim());
+        
+        const h1 = filter(raw[4] || []), h2 = filter(raw[5] || []), h3 = filter(raw[6] || []);
+        const headers = h1.map((_, i) => `${h1[i]} ${h2[i]} ${h3[i]}`.trim());
         
         let rows = raw.slice(7).filter(r => !r.every(c => c === ""));
         const formatted = rows.map(r => {
@@ -208,25 +211,31 @@ export default function Home() {
       const texts = dxf.entities.filter(ent => ent.type === "TEXT" || ent.type === "MTEXT");
       const lines = dxf.entities.filter(ent => ent.type === "LINE" || ent.type === "LWPOLYLINE");
 
-      // --- LOGICA DE AGRUPACIÓN (CLUSTERING) ---
+      // --- MOTOR DE DETECCIÓN Y AGRUPACIÓN ---
       const connectors = texts.map(t => {
         const name = (t.text || t.string || "").replace(/\{.*?\}/g, "").trim().toUpperCase();
+        
+        // Identificar etiquetas de conectores (J, P, AM, CAN, etc)
         if (/^[J|P|C|A|S|B]/.test(name) && name.length >= 2) {
           const p = t.position || t.startPoint || t.insert;
-          // Agrupamos líneas cercanas (Radio 60)
+          
+          // Agrupar líneas en un radio de 60 unidades para "capturar" el dibujo del conector
           const cluster = lines.filter(l => {
             const lx = l.vertices ? l.vertices[0].x : l.start.x;
             const ly = l.vertices ? l.vertices[0].y : l.start.y;
             return Math.sqrt(Math.pow(p.x - lx, 2) + Math.pow(p.y - ly, 2)) < 60;
           });
-          if (cluster.length > 0) return { name, x: p.x, y: p.y, entities: cluster };
+
+          if (cluster.length > 0) {
+            return { name, x: p.x, y: p.y, entities: cluster };
+          }
         }
         return null;
       }).filter(Boolean);
 
       setDetectedConnectors(connectors);
 
-      // Actualizar Status en tabla
+      // Actualizar Status en la tabla basándose en la detección real
       if (asociadoData.length > 0) {
         const connKey = Object.keys(asociadoData[0])[2]; 
         setAsociadoData(prev => prev.map(row => {
@@ -288,20 +297,20 @@ export default function Home() {
 
       {dxfData && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '30px', marginTop: '20px' }}>
-          {/* VISTA A */}
+          {/* VISTA A: ORIGINAL RECUPERADA */}
           <div className={styles.tableContainer}>
             <div className={styles.collapsibleHeader} style={{ backgroundColor: '#9b59b6' }}>
-              <span>🖼️ Vista A: Dibujo Original</span>
+              <span>🖼️ Vista A: Dibujo Original (Todas las Líneas)</span>
             </div>
             <DxfCanvas dxfRaw={dxfData.raw} />
           </div>
 
-          {/* VISTA B */}
+          {/* VISTA B: ESTANDARIZADA */}
           <div className={styles.tableContainer}>
             <div className={styles.collapsibleHeader} style={{ backgroundColor: '#3498db' }}>
-              <span>⚡ Vista B: Plano Estandarizado (Reconstruido)</span>
+              <span>⚡ Vista B: Plano Estandarizado (Objetos Detectados)</span>
             </div>
-            <StandardCanvas connectors={detectedConnectors} scale={0.8} offset={{ x: 300, y: 300 }} />
+            <StandardCanvas connectors={detectedConnectors} scale={0.8} offset={{ x: 350, y: 350 }} />
           </div>
         </div>
       )}
