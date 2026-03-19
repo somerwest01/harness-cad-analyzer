@@ -3,6 +3,42 @@ import DxfParser from "dxf-parser";
 import * as XLSX from "xlsx";
 import styles from "./Home.module.css";
 
+function StandardCanvas({ connectors, scale, offset }) {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const dX = (x) => x * scale + offset.x;
+    const dY = (y) => canvas.height - (y * scale + (canvas.height - offset.y));
+
+    connectors.forEach(conn => {
+      // Dibujamos un círculo estandarizado para cada conector detectado
+      ctx.beginPath();
+      ctx.arc(dX(conn.x), dY(conn.y), 15 * scale, 0, 2 * Math.PI);
+      ctx.fillStyle = "#3498db"; // Azul profesional
+      ctx.fill();
+      ctx.strokeStyle = "#2c3e50";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Etiqueta limpia
+      ctx.fillStyle = "#000";
+      ctx.font = `bold ${Math.max(12, 5 * scale)}px Arial`;
+      ctx.textAlign = "center";
+      ctx.fillText(conn.name, dX(conn.x), dY(conn.y) - (20 * scale));
+    });
+  }, [connectors, scale, offset]);
+
+  return (
+    <div style={{ border: '2px solid #3498db', borderRadius: '8px', overflow: 'hidden', background: '#f8f9fa' }}>
+      <canvas ref={canvasRef} width={2400} height={1200} style={{ width: '100%', height: '500px' }} />
+    </div>
+  );
+}
 
 function DxfCanvas({ dxfRaw }) {
   const canvasRef = useRef(null);
@@ -131,6 +167,7 @@ export default function Home() {
   const [partNumber, setPartNumber] = useState("");
   const [isTableVisible, setIsTableVisible] = useState(true);
   const [isCanvasVisible, setIsCanvasVisible] = useState(true);
+  const [detectedConnectors, setDetectedConnectors] = useState([]);
 
   const handleExcel = (e) => {
     const file = e.target.files[0];
@@ -166,50 +203,55 @@ export default function Home() {
     reader.readAsBinaryString(file);
   };
 
-  const handleDxf = async (e) => {
+const handleDxf = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     try {
       const text = await file.text();
       const dxf = new DxfParser().parseSync(text);
 
-      // --- PASO 1: EXTRAER DIMENSIONES (RAMALES) ---
-      // Filtramos solo los textos que son números (ej. "152", "508")
-      const dimensions = dxf.entities
-        .filter(ent => ent.type === "TEXT" || ent.type === "MTEXT")
-        .map(ent => ({
-          val: (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\P/g, " ").replace(/\\[a-zA-Z].*?;/g, "").trim(),
-        }))
-        .filter(d => !isNaN(d.val) && d.val !== "" && d.val !== "0");
+      const entities = dxf.entities;
+      const texts = entities.filter(ent => ent.type === "TEXT" || ent.type === "MTEXT");
+      const lines = entities.filter(ent => ent.type === "LINE" || ent.type === "LWPOLYLINE");
 
-      // Filtramos etiquetas de conectores para el Status
-      const allTexts = dxf.entities
-        .filter(ent => ent.type === "TEXT" || ent.type === "MTEXT")
-        .map(ent => (ent.text || ent.string || "").trim().toUpperCase());
+      // --- MOTOR DE DETECCIÓN DE CONECTORES ---
+      const connectors = texts.map(t => {
+        const name = (t.text || t.string || "").replace(/\{.*?\}/g, "").trim().toUpperCase();
+        
+        // Filtro: Solo textos que empiecen con J, P, AM, CAN, etc.
+        if (/^[J|P|C|A|S|B]/.test(name) && name.length >= 2) {
+          const p = t.position || t.startPoint || t.insert;
+          
+          // Buscamos líneas en un radio de 60 unidades del texto
+          const cluster = lines.filter(l => {
+            const lx = l.vertices ? l.vertices[0].x : l.start.x;
+            const ly = l.vertices ? l.vertices[0].y : l.start.y;
+            const dist = Math.sqrt(Math.pow(p.x - lx, 2) + Math.pow(p.y - ly, 2));
+            return dist < 60; 
+          });
 
+          if (cluster.length > 0) {
+            return { name, x: p.x, y: p.y, entities: cluster };
+          }
+        }
+        return null;
+      }).filter(Boolean);
+
+      setDetectedConnectors(connectors);
+
+      // (Mantenemos tu lógica anterior de la tabla de asociado)
       if (asociadoData.length > 0) {
         const keys = Object.keys(asociadoData[0]);
         const connKey = keys[2]; 
-        
-        setAsociadoData(prev => prev.map((row, index) => {
+        setAsociadoData(prev => prev.map(row => {
           const name = String(row[connKey]).trim().toUpperCase();
-          const found = allTexts.some(t => t.includes(name) && name !== "");
-          
-          // Asignación de Ramal: 
-          // Intentamos asignar una dimensión de la lista basada en el orden 
-          // o puedes dejarlo como "N/A" si no hay suficientes dimensiones
-          const ramalVal = dimensions[index] ? dimensions[index].val : (dimensions[0]?.val || "N/A");
-
-          return { 
-            ...row, 
-            "Ramal": ramalVal, 
-            "Status": found ? "✅ Encontrado" : "❌ No en dibujo" 
-          };
+          const found = connectors.some(c => c.name.includes(name));
+          return { ...row, "Status": found ? "✅ Encontrado" : "❌ No detectado" };
         }));
       }
 
-      setDxfData({ total: dxf.entities.length, raw: dxf });
-    } catch (err) { alert("Error al leer DXF"); }
+      setDxfData({ raw: dxf });
+    } catch (err) { alert("Error al procesar DXF"); }
   };
 
   return (
@@ -275,19 +317,32 @@ export default function Home() {
         </div>
       )}
 
-      {dxfData && dxfData.raw && (
-        <div className={styles.tableContainer} style={{ marginBottom: '40px' }}>
-          <div className={styles.collapsibleHeader} style={{ backgroundColor: '#9b59b6' }} onClick={() => setIsCanvasVisible(!isCanvasVisible)}>
-            <span>🖼️ Vista Previa del Arnés</span>
-            <span>{isCanvasVisible ? "▲" : "▼"}</span>
-          </div>
-          {isCanvasVisible && (
-            <div style={{ padding: '20px', background: '#ecf0f1' }}>
+        {dxfData && dxfData.raw && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px' }}>
+          
+          {/* VISTA 1: ORIGINAL (REFERENCIA) */}
+          <div className={styles.tableContainer}>
+            <div className={styles.collapsibleHeader} style={{ backgroundColor: '#9b59b6' }}>
+              <span>🖼️ Vista A: Dibujo Original de AutoCAD</span>
+            </div>
+            <div style={{ padding: '10px', background: '#eee' }}>
               <DxfCanvas dxfRaw={dxfData.raw} />
             </div>
-          )}
+          </div>
+
+          {/* VISTA 2: NUEVO PLANO (ESTANDARIZADO) */}
+          <div className={styles.tableContainer}>
+            <div className={styles.collapsibleHeader} style={{ backgroundColor: '#3498db' }}>
+              <span>⚡ Vista B: Plano Estandarizado (Generado)</span>
+            </div>
+            <div style={{ padding: '10px', background: '#ecf0f1' }}>
+              <StandardCanvas 
+                connectors={detectedConnectors} 
+                scale={0.5} // Puedes ajustar escalas independientes
+                offset={{ x: 100, y: 100 }} 
+              />
+            </div>
+          </div>
+
         </div>
       )}
-    </div>
-  );
-}
