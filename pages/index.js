@@ -220,11 +220,16 @@ export default function Home() {
           const p = t.position || t.startPoint || t.insert;
           
           // Agrupar líneas en un radio de 60 unidades para "capturar" el dibujo del conector
-          const cluster = lines.filter(l => {
-            const lx = l.vertices ? l.vertices[0].x : l.start.x;
-            const ly = l.vertices ? l.vertices[0].y : l.start.y;
-            return Math.sqrt(Math.pow(p.x - lx, 2) + Math.pow(p.y - ly, 2)) < 60;
-          });
+const cluster = lines.filter(l => {
+  // Verificamos que existan los vértices o puntos de inicio antes de calcular
+  const startX = l.vertices?.[0]?.x ?? l.start?.x;
+  const startY = l.vertices?.[0]?.y ?? l.start?.y;
+  
+  if (startX === undefined || startY === undefined) return false;
+
+  const dist = Math.sqrt(Math.pow(p.x - startX, 2) + Math.pow(p.y - startY, 2));
+  return dist < 60;
+});
 
           if (cluster.length > 0) {
             return { name, x: p.x, y: p.y, entities: cluster };
