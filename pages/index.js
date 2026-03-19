@@ -3,7 +3,7 @@ import DxfParser from "dxf-parser";
 import * as XLSX from "xlsx";
 import styles from "./Home.module.css";
 
-// --- VISOR A: DIBUJO ORIGINAL (CON PROTECCIÓN) ---
+// --- VISOR A: DIBUJO ORIGINAL ---
 function DxfCanvas({ dxfRaw }) {
   const canvasRef = useRef(null);
   const [scale, setScale] = useState(1);
@@ -70,7 +70,7 @@ function DxfCanvas({ dxfRaw }) {
             }
           }
         }
-      } catch (e) { /* Ignorar entidad corrupta */ }
+      } catch (e) {}
     });
   }, [dxfRaw, scale, offset]);
 
@@ -95,15 +95,37 @@ function DxfCanvas({ dxfRaw }) {
           setLastMousePos({ x: e.clientX, y: e.clientY });
         }}
         onMouseUp={() => setIsDragging(false)}
+        onMouseLeave={() => setIsDragging(false)}
         style={{ width: '100%', height: '500px', cursor: isDragging ? 'grabbing' : 'grab' }} 
       />
     </div>
   );
 }
 
-// --- VISOR B: PLANO ESTANDARIZADO (CON FILTROS DE SEGURIDAD) ---
-function StandardCanvas({ connectors, scale, offset }) {
+// --- VISOR B: PLANO ESTANDARIZADO (CON ZOOM Y PAN) ---
+function StandardCanvas({ connectors }) {
   const canvasRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
+
+  // Encuadre inicial automático
+  useEffect(() => {
+    if (!connectors || connectors.length === 0 || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const minX = 1413.27, maxX = 2047.99, minY = 481.35, maxY = 777.74;
+    const dxfWidth = maxX - minX;
+    const dxfHeight = maxY - minY;
+    const padding = 60;
+    const newScale = Math.min((canvas.width - padding * 2) / dxfWidth, (canvas.height - padding * 2) / dxfHeight);
+
+    setScale(newScale || 1);
+    setOffset({
+      x: (canvas.width / 2) - (minX + dxfWidth / 2) * (newScale || 1),
+      y: (canvas.height / 2) + (minY + dxfHeight / 2) * (newScale || 1) 
+    });
+  }, [connectors]);
 
   useEffect(() => {
     if (!canvasRef.current || !connectors) return;
@@ -115,7 +137,7 @@ function StandardCanvas({ connectors, scale, offset }) {
 
     connectors.forEach(conn => {
       try {
-        // Dibujar geometría agrupada con validación de puntos
+        // Dibujar geometría original en gris suave
         ctx.strokeStyle = "#d1d5db";
         ctx.lineWidth = 1;
         conn.entities?.forEach(ent => {
@@ -133,7 +155,7 @@ function StandardCanvas({ connectors, scale, offset }) {
           }
         });
 
-        // Dibujar Burbuja Azul
+        // Dibujar Burbuja Azul (Normalizada)
         ctx.beginPath();
         ctx.arc(dX(conn.x), dY(conn.y), 15 * scale, 0, 2 * Math.PI);
         ctx.fillStyle = "#3498db";
@@ -142,17 +164,39 @@ function StandardCanvas({ connectors, scale, offset }) {
         ctx.lineWidth = 2;
         ctx.stroke();
 
+        // Texto Estandarizado
         ctx.fillStyle = "#000";
         ctx.font = `bold ${Math.max(12, 6 * scale)}px Arial`;
         ctx.textAlign = "center";
-        ctx.fillText(conn.name || "?", dX(conn.x), dY(conn.y) - (22 * scale));
-      } catch (e) { console.warn("Error dibujando conector", conn.name); }
+        ctx.fillText(conn.name || "?", dX(conn.x), dY(conn.y) - (25 * scale));
+      } catch (e) {}
     });
   }, [connectors, scale, offset]);
 
+  const handleWheel = (e) => {
+    e.preventDefault();
+    const factor = Math.pow(1.1, -e.deltaY / 400);
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mX = e.clientX - rect.left, mY = e.clientY - rect.top;
+    setOffset(prev => ({ x: mX - (mX - prev.x) * factor, y: mY - (mY - prev.y) * factor }));
+    setScale(s => s * factor);
+  };
+
   return (
     <div style={{ border: '2px solid #3498db', borderRadius: '8px', overflow: 'hidden', background: '#f8f9fa' }}>
-      <canvas ref={canvasRef} width={2400} height={1200} style={{ width: '100%', height: '500px' }} />
+      <canvas 
+        ref={canvasRef} width={2400} height={1200} 
+        onWheel={handleWheel}
+        onMouseDown={(e) => { setIsDragging(true); setLastMousePos({ x: e.clientX, y: e.clientY }); }}
+        onMouseMove={(e) => {
+          if (!isDragging) return;
+          setOffset(prev => ({ x: prev.x + (e.clientX - lastMousePos.x), y: prev.y + (e.clientY - lastMousePos.y) }));
+          setLastMousePos({ x: e.clientX, y: e.clientY });
+        }}
+        onMouseUp={() => setIsDragging(false)}
+        onMouseLeave={() => setIsDragging(false)}
+        style={{ width: '100%', height: '500px', cursor: isDragging ? 'grabbing' : 'grab' }} 
+      />
     </div>
   );
 }
@@ -273,7 +317,7 @@ export default function Home() {
           </div>
           <div className={styles.tableContainer}>
             <div className={styles.collapsibleHeader} style={{ backgroundColor: '#3498db' }}><span>⚡ Vista B: Estandarizada</span></div>
-            <StandardCanvas connectors={detectedConnectors} scale={0.8} offset={{ x: 350, y: 350 }} />
+            <StandardCanvas connectors={detectedConnectors} />
           </div>
         </div>
       )}
