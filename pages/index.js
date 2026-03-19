@@ -39,26 +39,36 @@ function DxfCanvas({ dxfRaw }) {
     const dX = (x) => x * scale + offset.x;
     const dY = (y) => canvasRef.current.height - (y * scale + (canvasRef.current.height - offset.y));
 
-    dxfRaw.entities.forEach(ent => {
+dxfRaw.entities.forEach(ent => {
       try {
         ctx.lineWidth = 1.2;
         ctx.strokeStyle = "#2c3e50";
 
+        // DIBUJAR LÍNEAS SIMPLES
         if (ent.type === 'LINE') {
           ctx.beginPath();
           ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
           ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
           ctx.stroke();
-        } else if (ent.vertices) {
+        } 
+        // DIBUJAR POLILÍNEAS (ESTO ES LO QUE FALTABA)
+        else if (ent.type === 'LWPOLYLINE' || (ent.vertices && ent.vertices.length > 1)) {
           ctx.beginPath();
-          ent.vertices.forEach((v, i) => i === 0 ? ctx.moveTo(dX(v.x), dY(v.y)) : ctx.lineTo(dX(v.x), dY(v.y)));
-          if (ent.shape) ctx.closePath();
+          ent.vertices.forEach((v, i) => {
+            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
+            else ctx.lineTo(dX(v.x), dY(v.y));
+          });
+          if (ent.shape || ent.closed) ctx.closePath();
           ctx.stroke();
-        } else if (ent.type === 'CIRCLE') {
+        } 
+        // DIBUJAR CÍRCULOS
+        else if (ent.type === 'CIRCLE') {
           ctx.beginPath();
           ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, 0, 2 * Math.PI);
           ctx.stroke();
-        } else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+        } 
+        // DIBUJAR TEXTOS
+        else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
           const p = ent.position || ent.startPoint || ent.insert;
           if (p) {
             let txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").replace(/\\[a-zA-Z].*?;/g, "").trim();
@@ -69,7 +79,7 @@ function DxfCanvas({ dxfRaw }) {
             }
           }
         }
-      } catch (e) {}
+      } catch (e) { console.error("Error en entidad:", e); }
     });
   }, [dxfRaw, scale, offset]);
 
@@ -113,6 +123,20 @@ function StandardCanvas({ connectors, scale, offset }) {
     const dY = (y) => canvasRef.current.height - (y * scale + (canvasRef.current.height - offset.y));
 
     connectors.forEach(conn => {
+      ctx.strokeStyle = "#bdc3c7"; 
+      ctx.lineWidth = 1;
+      conn.entities.forEach(ent => {
+        if (ent.type === 'LINE') {
+          ctx.beginPath();
+          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
+          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+          ctx.stroke();
+        } else if (ent.vertices) {
+          ctx.beginPath();
+          ent.vertices.forEach((v, i) => i === 0 ? ctx.moveTo(dX(v.x), dY(v.y)) : ctx.lineTo(dX(v.x), dY(v.y)));
+          ctx.stroke();
+        }
+      });
       // Dibujo de conector tipo "Burbuja" azul
       ctx.beginPath();
       ctx.arc(dX(conn.x), dY(conn.y), 15 * scale, 0, 2 * Math.PI);
