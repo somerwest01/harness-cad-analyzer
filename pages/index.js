@@ -3,7 +3,7 @@ import DxfParser from "dxf-parser";
 import * as XLSX from "xlsx";
 import styles from "./Home.module.css";
 
-// --- VISOR A: DIBUJO ORIGINAL (CON SOPORTE COMPLETO DE LÍNEAS) ---
+// --- VISOR A: DIBUJO ORIGINAL (CON PROTECCIÓN) ---
 function DxfCanvas({ dxfRaw }) {
   const canvasRef = useRef(null);
   const [scale, setScale] = useState(1);
@@ -14,20 +14,16 @@ function DxfCanvas({ dxfRaw }) {
   useEffect(() => {
     if (!dxfRaw || !canvasRef.current) return;
     const canvas = canvasRef.current;
-    
-    // Encuadre automático basado en los límites conocidos del arnés
-    const minX = 1413.27, maxX = 2047.99;
-    const minY = 481.35, maxY = 777.74;
-
+    const minX = 1413.27, maxX = 2047.99, minY = 481.35, maxY = 777.74;
     const dxfWidth = maxX - minX;
     const dxfHeight = maxY - minY;
     const padding = 40;
     const newScale = Math.min((canvas.width - padding * 2) / dxfWidth, (canvas.height - padding * 2) / dxfHeight);
 
-    setScale(newScale);
+    setScale(newScale || 1);
     setOffset({
-      x: (canvas.width / 2) - (minX + dxfWidth / 2) * newScale,
-      y: (canvas.height / 2) + (minY + dxfHeight / 2) * newScale 
+      x: (canvas.width / 2) - (minX + dxfWidth / 2) * (newScale || 1),
+      y: (canvas.height / 2) + (minY + dxfHeight / 2) * (newScale || 1) 
     });
   }, [dxfRaw]);
 
@@ -36,38 +32,33 @@ function DxfCanvas({ dxfRaw }) {
     const ctx = canvasRef.current.getContext("2d");
     ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
-    const dX = (x) => x * scale + offset.x;
-    const dY = (y) => canvasRef.current.height - (y * scale + (canvasRef.current.height - offset.y));
+    const dX = (x) => (x || 0) * scale + offset.x;
+    const dY = (y) => canvasRef.current.height - ((y || 0) * scale + (canvasRef.current.height - offset.y));
 
     dxfRaw.entities.forEach(ent => {
       try {
         ctx.lineWidth = 1.2;
         ctx.strokeStyle = "#2c3e50";
 
-        // 1. LÍNEAS SIMPLES
-        if (ent.type === 'LINE') {
+        if (ent.type === 'LINE' && ent.start && ent.end) {
           ctx.beginPath();
           ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
           ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
           ctx.stroke();
         } 
-        // 2. POLILÍNEAS (LWPOLYLINE) - Crucial para ver los ramales y conectores
-        else if (ent.type === 'LWPOLYLINE' || (ent.vertices && ent.vertices.length > 1)) {
+        else if ((ent.type === 'LWPOLYLINE' || ent.vertices) && ent.vertices?.length > 0) {
           ctx.beginPath();
           ent.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(dX(v.x), dY(v.y));
-            else ctx.lineTo(dX(v.x), dY(v.y));
+            if (v) i === 0 ? ctx.moveTo(dX(v.x), dY(v.y)) : ctx.lineTo(dX(v.x), dY(v.y));
           });
           if (ent.shape || ent.closed) ctx.closePath();
           ctx.stroke();
         } 
-        // 3. CÍRCULOS
-        else if (ent.type === 'CIRCLE') {
+        else if (ent.type === 'CIRCLE' && ent.center) {
           ctx.beginPath();
-          ctx.arc(dX(ent.center.x), dY(ent.center.y), ent.radius * scale, 0, 2 * Math.PI);
+          ctx.arc(dX(ent.center.x), dY(ent.center.y), (ent.radius || 1) * scale, 0, 2 * Math.PI);
           ctx.stroke();
         } 
-        // 4. TEXTOS
         else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
           const p = ent.position || ent.startPoint || ent.insert;
           if (p) {
@@ -79,7 +70,7 @@ function DxfCanvas({ dxfRaw }) {
             }
           }
         }
-      } catch (e) {}
+      } catch (e) { /* Ignorar entidad corrupta */ }
     });
   }, [dxfRaw, scale, offset]);
 
@@ -110,49 +101,52 @@ function DxfCanvas({ dxfRaw }) {
   );
 }
 
-// --- VISOR B: PLANO ESTANDARIZADO (RECONSTRUCCIÓN LIMPIA) ---
+// --- VISOR B: PLANO ESTANDARIZADO (CON FILTROS DE SEGURIDAD) ---
 function StandardCanvas({ connectors, scale, offset }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || !connectors) return;
     const ctx = canvasRef.current.getContext("2d");
     ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
-    const dX = (x) => x * scale + offset.x;
-    const dY = (y) => canvasRef.current.height - (y * scale + (canvasRef.current.height - offset.y));
+    const dX = (x) => (x || 0) * scale + offset.x;
+    const dY = (y) => canvasRef.current.height - ((y || 0) * scale + (canvasRef.current.height - offset.y));
 
     connectors.forEach(conn => {
-      // 1. Dibujar líneas originales agrupadas para referencia visual
-      ctx.strokeStyle = "#d1d5db"; // Gris claro
-      ctx.lineWidth = 1;
-      conn.entities.forEach(ent => {
-        if (ent.type === 'LINE') {
-          ctx.beginPath();
-          ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
-          ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
-          ctx.stroke();
-        } else if (ent.vertices) {
-          ctx.beginPath();
-          ent.vertices.forEach((v, i) => i === 0 ? ctx.moveTo(dX(v.x), dY(v.y)) : ctx.lineTo(dX(v.x), dY(v.y)));
-          ctx.stroke();
-        }
-      });
+      try {
+        // Dibujar geometría agrupada con validación de puntos
+        ctx.strokeStyle = "#d1d5db";
+        ctx.lineWidth = 1;
+        conn.entities?.forEach(ent => {
+          if (ent.type === 'LINE' && ent.start && ent.end) {
+            ctx.beginPath();
+            ctx.moveTo(dX(ent.start.x), dY(ent.start.y));
+            ctx.lineTo(dX(ent.end.x), dY(ent.end.y));
+            ctx.stroke();
+          } else if (ent.vertices?.length > 0) {
+            ctx.beginPath();
+            ent.vertices.forEach((v, i) => {
+              if (v) i === 0 ? ctx.moveTo(dX(v.x), dY(v.y)) : ctx.lineTo(dX(v.x), dY(v.y));
+            });
+            ctx.stroke();
+          }
+        });
 
-      // 2. Dibujar el "Objeto Inteligente" (Círculo azul)
-      ctx.beginPath();
-      ctx.arc(dX(conn.x), dY(conn.y), 15 * scale, 0, 2 * Math.PI);
-      ctx.fillStyle = "#3498db";
-      ctx.fill();
-      ctx.strokeStyle = "#2c3e50";
-      ctx.lineWidth = 2;
-      ctx.stroke();
+        // Dibujar Burbuja Azul
+        ctx.beginPath();
+        ctx.arc(dX(conn.x), dY(conn.y), 15 * scale, 0, 2 * Math.PI);
+        ctx.fillStyle = "#3498db";
+        ctx.fill();
+        ctx.strokeStyle = "#2c3e50";
+        ctx.lineWidth = 2;
+        ctx.stroke();
 
-      // 3. Etiqueta normalizada
-      ctx.fillStyle = "#000";
-      ctx.font = `bold ${Math.max(12, 6 * scale)}px Arial`;
-      ctx.textAlign = "center";
-      ctx.fillText(conn.name, dX(conn.x), dY(conn.y) - (22 * scale));
+        ctx.fillStyle = "#000";
+        ctx.font = `bold ${Math.max(12, 6 * scale)}px Arial`;
+        ctx.textAlign = "center";
+        ctx.fillText(conn.name || "?", dX(conn.x), dY(conn.y) - (22 * scale));
+      } catch (e) { console.warn("Error dibujando conector", conn.name); }
     });
   }, [connectors, scale, offset]);
 
@@ -180,15 +174,12 @@ export default function Home() {
         const wb = XLSX.read(bstr, { type: "binary" });
         const ws = wb.Sheets[wb.SheetNames[0]];
         let raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-        
         setPartNumber(raw[3] ? String(raw[3][0]) : "Desconocido");
         const colsDel = [2, 4, 7, 9, 12, 18, 19, 20];
         const filter = (r) => r.filter((_, i) => !colsDel.includes(i));
-        
         const h1 = filter(raw[4] || []), h2 = filter(raw[5] || []), h3 = filter(raw[6] || []);
         const headers = h1.map((_, i) => `${h1[i]} ${h2[i]} ${h3[i]}`.trim());
-        
-        let rows = raw.slice(7).filter(r => !r.every(c => c === ""));
+        let rows = raw.slice(7).filter(r => r && !r.every(c => c === ""));
         const formatted = rows.map(r => {
           const f = filter(r);
           const obj = { "Status": "⏳ Pendiente" };
@@ -207,40 +198,26 @@ export default function Home() {
     try {
       const text = await file.text();
       const dxf = new DxfParser().parseSync(text);
-
       const texts = dxf.entities.filter(ent => ent.type === "TEXT" || ent.type === "MTEXT");
       const lines = dxf.entities.filter(ent => ent.type === "LINE" || ent.type === "LWPOLYLINE");
 
-      // --- MOTOR DE DETECCIÓN Y AGRUPACIÓN ---
       const connectors = texts.map(t => {
         const name = (t.text || t.string || "").replace(/\{.*?\}/g, "").trim().toUpperCase();
-        
-        // Identificar etiquetas de conectores (J, P, AM, CAN, etc)
         if (/^[J|P|C|A|S|B]/.test(name) && name.length >= 2) {
           const p = t.position || t.startPoint || t.insert;
-          
-          // Agrupar líneas en un radio de 60 unidades para "capturar" el dibujo del conector
-const cluster = lines.filter(l => {
-  // Verificamos que existan los vértices o puntos de inicio antes de calcular
-  const startX = l.vertices?.[0]?.x ?? l.start?.x;
-  const startY = l.vertices?.[0]?.y ?? l.start?.y;
-  
-  if (startX === undefined || startY === undefined) return false;
-
-  const dist = Math.sqrt(Math.pow(p.x - startX, 2) + Math.pow(p.y - startY, 2));
-  return dist < 60;
-});
-
-          if (cluster.length > 0) {
-            return { name, x: p.x, y: p.y, entities: cluster };
-          }
+          if (!p) return null;
+          const cluster = lines.filter(l => {
+            const lx = l.vertices?.[0]?.x ?? l.start?.x;
+            const ly = l.vertices?.[0]?.y ?? l.start?.y;
+            if (lx === undefined) return false;
+            return Math.sqrt(Math.pow(p.x - lx, 2) + Math.pow(p.y - ly, 2)) < 80;
+          });
+          if (cluster.length > 0) return { name, x: p.x, y: p.y, entities: cluster };
         }
         return null;
       }).filter(Boolean);
 
       setDetectedConnectors(connectors);
-
-      // Actualizar Status en la tabla basándose en la detección real
       if (asociadoData.length > 0) {
         const connKey = Object.keys(asociadoData[0])[2]; 
         setAsociadoData(prev => prev.map(row => {
@@ -249,7 +226,6 @@ const cluster = lines.filter(l => {
           return { ...row, "Status": found ? "✅ Encontrado" : "❌ No detectado" };
         }));
       }
-
       setDxfData({ raw: dxf });
     } catch (err) { alert("Error al procesar DXF"); }
   };
@@ -257,32 +233,21 @@ const cluster = lines.filter(l => {
   return (
     <div className={styles.container}>
       <h1 className={styles.title}>Harness CAD & Data Analyzer</h1>
-      
       <div className={styles.cardsContainer}>
-        <div className={styles.card}>
-          <h3>📁 Dibujo DXF</h3>
-          <input type="file" onChange={handleDxf} accept=".dxf" />
-        </div>
-        <div className={styles.card}>
-          <h3>📊 Excel Asociado</h3>
-          <input type="file" onChange={handleExcel} accept=".xlsx, .xls" />
-        </div>
+        <div className={styles.card}><h3>📁 DXF</h3><input type="file" onChange={handleDxf} accept=".dxf" /></div>
+        <div className={styles.card}><h3>📊 Excel</h3><input type="file" onChange={handleExcel} accept=".xlsx, .xls" /></div>
       </div>
 
       {asociadoData.length > 0 && (
         <div className={styles.tableContainer}>
           <div className={styles.collapsibleHeader} onClick={() => setIsTableVisible(!isTableVisible)}>
-            <span>📊 Tabla Asociado: <b>{partNumber}</b></span>
+            <span>📊 Tabla: <b>{partNumber}</b></span>
             <span>{isTableVisible ? "▲" : "▼"}</span>
           </div>
           {isTableVisible && (
             <div className={styles.scrollArea}>
               <table className={styles.table}>
-                <thead>
-                  <tr>
-                    {Object.keys(asociadoData[0]).map(k => <th key={k}>{k}</th>)}
-                  </tr>
-                </thead>
+                <thead><tr>{Object.keys(asociadoData[0]).map(k => <th key={k}>{k}</th>)}</tr></thead>
                 <tbody>
                   {asociadoData.map((row, i) => (
                     <tr key={i}>
@@ -302,19 +267,12 @@ const cluster = lines.filter(l => {
 
       {dxfData && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '30px', marginTop: '20px' }}>
-          {/* VISTA A: ORIGINAL RECUPERADA */}
           <div className={styles.tableContainer}>
-            <div className={styles.collapsibleHeader} style={{ backgroundColor: '#9b59b6' }}>
-              <span>🖼️ Vista A: Dibujo Original (Todas las Líneas)</span>
-            </div>
+            <div className={styles.collapsibleHeader} style={{ backgroundColor: '#9b59b6' }}><span>🖼️ Vista A: Original</span></div>
             <DxfCanvas dxfRaw={dxfData.raw} />
           </div>
-
-          {/* VISTA B: ESTANDARIZADA */}
           <div className={styles.tableContainer}>
-            <div className={styles.collapsibleHeader} style={{ backgroundColor: '#3498db' }}>
-              <span>⚡ Vista B: Plano Estandarizado (Objetos Detectados)</span>
-            </div>
+            <div className={styles.collapsibleHeader} style={{ backgroundColor: '#3498db' }}><span>⚡ Vista B: Estandarizada</span></div>
             <StandardCanvas connectors={detectedConnectors} scale={0.8} offset={{ x: 350, y: 350 }} />
           </div>
         </div>
