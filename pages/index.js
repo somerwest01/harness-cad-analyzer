@@ -260,70 +260,51 @@ export default function Home() {
     reader.readAsBinaryString(file);
   };
 
-  const handleDxf = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const dxf = new DxfParser().parseSync(text);
-      const texts = dxf.entities.filter(ent => ent.type === "TEXT" || ent.type === "MTEXT");
-      const lines = dxf.entities.filter(ent => ent.type === "LINE" || ent.type === "LWPOLYLINE");
+const handleDxf = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const dxf = new DxfParser().parseSync(text);
 
-      // --- PASO 1: DETECCIÓN Y CLUSTERING (ACTUALIZADO CON BOUNDING BOX) ---
-      const connectors = texts.map(t => {
-        const name = (t.text || t.string || "").replace(/\{.*?\}/g, "").trim().toUpperCase();
-        if (/^[J|P|C|A|S|B]/.test(name) && name.length >= 2) {
-          const p = t.position || t.startPoint || t.insert;
-          if (!p) return null;
-          
-          // Agrupar líneas en un radio de 80 unidades
-          const cluster = lines.filter(l => {
-            const lx = l.vertices?.[0]?.x ?? l.start?.x;
-            const ly = l.vertices?.[0]?.y ?? l.start?.y;
-            if (lx === undefined) return false;
-            return Math.sqrt(Math.pow(p.x - lx, 2) + Math.pow(p.y - ly, 2)) < 80;
-          });
+    // Filtro seguro para dimensiones
+    const dimensions = dxf.entities
+      .filter(ent => ent.type === "TEXT" || ent.type === "MTEXT")
+      .map(ent => {
+        const txt = (ent.text || ent.string || "").replace(/\{.*?\}/g, "").trim();
+        return { val: txt };
+      })
+      .filter(d => d.val && !isNaN(d.val) && d.val !== "0");
 
-          if (cluster.length > 0) {
-            // --- NUEVO: Calcular la Caja de Límites (Bounding Box) del clúster ---
-            // Esto es vital para detectar el hover.
-            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-            cluster.forEach(ent => {
-              if (ent.type === 'LINE') {
-                minX = Math.min(minX, ent.start.x, ent.end.x);
-                maxX = Math.max(maxX, ent.start.x, ent.end.x);
-                minY = Math.min(minY, ent.start.y, ent.end.y);
-                maxY = Math.max(maxY, ent.start.y, ent.end.y);
-              } else if (ent.vertices) {
-                ent.vertices.forEach(v => {
-                  minX = Math.min(minX, v.x);
-                  maxX = Math.max(maxX, v.x);
-                  minY = Math.min(minY, v.y);
-                  maxY = Math.max(maxY, v.y);
-                });
-              }
-            });
+    // Filtro seguro para etiquetas de conectores
+    const allTexts = dxf.entities
+      .filter(ent => ent.type === "TEXT" || ent.type === "MTEXT")
+      .map(ent => (ent.text || ent.string || "").trim().toUpperCase())
+      .filter(t => t !== "");
 
-            // Retornamos el objeto Smart con su caja de límites
-            return { name, x: p.x, y: p.y, entities: cluster, bbox: { minX, maxX, minY, maxY } };
-          }
-        }
-        return null;
-      }).filter(Boolean);
+    if (asociadoData.length > 0) {
+      const keys = Object.keys(asociadoData[0]);
+      const connKey = keys[2]; 
+      
+      setAsociadoData(prev => prev.map((row, index) => {
+        const name = String(row[connKey] || "").trim().toUpperCase();
+        const found = name !== "" && allTexts.some(t => t.includes(name));
+        const ramalVal = dimensions[index] ? dimensions[index].val : (dimensions[0]?.val || "N/A");
 
-      setDetectedConnectors(connectors);
-      if (asociadoData.length > 0) {
-        const connKey = Object.keys(asociadoData[0])[2]; 
-        setAsociadoData(prev => prev.map(row => {
-          const name = String(row[connKey]).trim().toUpperCase();
-          const found = connectors.some(c => c.name.includes(name));
-          return { ...row, "Status": found ? "✅ Encontrado" : "❌ No detectado" };
-        }));
-      }
-      setDxfData({ raw: dxf });
-    } catch (err) { alert("Error al procesar DXF"); }
-  };
+        return { 
+          ...row, 
+          "Ramal": ramalVal, 
+          "Status": found ? "✅ Encontrado" : "❌ No en dibujo" 
+        };
+      }));
+    }
 
+    setDxfData({ raw: dxf });
+  } catch (err) { 
+    console.error(err);
+    alert("Error de formato en el DXF. Intenta exportarlo como AutoCAD 2013 o inferior."); 
+  }
+};
   return (
     <div className={styles.container}>
       <h1 className={styles.title}>Harness CAD & Data Analyzer</h1>
